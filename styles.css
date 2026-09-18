@@ -1,0 +1,268 @@
+/* Plain CSS that Tailwind utilities can't express cleanly: scrollbars,
+   floor material patterns, door/window glyphs, print output, motion guards. */
+
+::selection {
+  background: color-mix(in oklab, var(--color-primary) 30%, transparent);
+}
+
+.app-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.app-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.app-scroll::-webkit-scrollbar-track { background: transparent; }
+.app-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+
+/* Canvas workspace: a faint dot grid reads as a work surface, like a cutting mat under the plan. */
+.canvas-surface {
+  background-image: radial-gradient(color-mix(in oklab, var(--color-foreground) 14%, transparent) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+#room-stage {
+  filter: drop-shadow(0 12px 28px rgba(0,0,0,.14)) drop-shadow(0 2px 6px rgba(0,0,0,.08));
+}
+@media (prefers-color-scheme: dark) {
+  #room-stage {
+    filter: drop-shadow(0 12px 28px rgba(0,0,0,.5)) drop-shadow(0 2px 6px rgba(0,0,0,.35));
+  }
+}
+
+.view-toggle-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+#room-stage { flex: none; }
+#room-workspace { width: max-content; }
+#view-toolbar {
+  position: sticky;
+  bottom: 16px;
+  left: 8px;
+  width: max-content;
+  margin: -48px 16px 8px auto;
+  z-index: 25;
+}
+#room-view-status {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  font-size: 12px;
+  color: var(--color-muted);
+  pointer-events: none;
+}
+button:disabled, input:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 479px) {
+  #room-workspace { padding-inline: 32px; }
+}
+
+.furniture-layer {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+.furniture-layer.is-selected { border-color: var(--color-primary); }
+.furniture-layer[data-drop="before"] { box-shadow: inset 0 3px var(--color-primary); }
+.furniture-layer[data-drop="after"] { box-shadow: inset 0 -3px var(--color-primary); }
+.layer-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  padding: 6px;
+  text-align: left;
+  border-radius: 7px;
+}
+.layer-select:hover, .layer-actions button:hover { background: var(--color-surface-hover); }
+.layer-select > i { color: var(--color-muted); cursor: grab; }
+.layer-thumbnail { flex: none; pointer-events: none; }
+.layer-label { min-width: 0; }
+.layer-label > span { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-label small { display: block; font-size: 10px; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.layer-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 0 6px 6px; }
+.layer-actions button { min-height: 30px; border: 1px solid var(--color-border); border-radius: 5px; font-size: 11px; }
+.layer-select:focus-visible, .layer-actions button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+
+.furniture-piece.is-overlapping {
+  outline: 2px dashed var(--color-muted);
+  outline-offset: 4px;
+}
+.furniture-piece.is-outside {
+  outline: 3px dashed var(--color-danger);
+  outline-offset: 3px;
+}
+.furniture-piece.is-overlapping:focus-visible {
+  outline: 3px solid var(--color-primary);
+}
+
+#room-stage.is-3d { filter: none; touch-action: none; user-select: none; cursor: grab; }
+#room-stage:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 4px; }
+#room-stage.is-panning, #room-stage.is-panning * { cursor: grabbing; }
+#room-workspace:has(#room-stage.is-3d) { padding: 48px 16px 52px; }
+#room-stage.is-3d canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#room-stage.is-3d canvas:active { cursor: grabbing; }
+.preview-message { position: absolute; inset: 0; display: grid; place-content: center; padding: 24px; color: var(--color-muted); font-size: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .view-toggle-btn, .furniture-piece { transition: none; animation: none; }
+}
+
+/* Custom range track/thumb so door & window position sliders match the app's rounded, bordered language instead of the raw OS control. */
+input[type="range"].app-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-border);
+}
+input[type="range"].app-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  border: 2px solid var(--color-surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  cursor: pointer;
+  margin-top: -6px;
+}
+input[type="range"].app-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-border);
+}
+input[type="range"].app-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  border: 2px solid var(--color-surface);
+  box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  cursor: pointer;
+}
+
+/* Floor materials, ponytail: flat CSS gradients instead of texture images, swap for photographic tiles when real assets exist. */
+.floor-oak {
+  background-color: #d9bd97;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(0,0,0,.06) 0 2px, transparent 2px 38px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.18) 0 1px, transparent 1px 180px);
+}
+.floor-walnut {
+  background-color: #6b4a34;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(0,0,0,.18) 0 2px, transparent 2px 34px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.07) 0 1px, transparent 1px 160px);
+}
+.floor-herringbone {
+  background-color: #cbb08a;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(0,0,0,.14) 0 2px, transparent 2px 24px),
+    repeating-linear-gradient(-45deg, rgba(0,0,0,.14) 0 2px, transparent 2px 24px);
+}
+.floor-tile {
+  background-color: #c7c9cc;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 2px, transparent 2px 60px),
+    repeating-linear-gradient(90deg, rgba(0,0,0,.14) 0 2px, transparent 2px 60px);
+}
+.floor-concrete {
+  background-color: #b7b8b6;
+  background-image: radial-gradient(rgba(0,0,0,.06) 1px, transparent 1px);
+  background-size: 6px 6px;
+}
+.floor-carpet {
+  background-color: #d6d3ce;
+  background-image: radial-gradient(rgba(0,0,0,.07) 1px, transparent 1px);
+  background-size: 4px 4px;
+}
+
+/* Furniture piece resting on the floor */
+.furniture-piece {
+  position: absolute;
+  border: 1.5px solid transparent;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition: box-shadow .15s ease, border-color .15s ease;
+}
+.furniture-piece:hover {
+  border-color: color-mix(in oklab, var(--color-primary) 60%, var(--color-foreground) 40%);
+}
+.furniture-piece:active { cursor: grabbing; }
+.furniture-piece.is-selected {
+  border-color: var(--color-primary);
+  border-width: 2px;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 22%, transparent);
+}
+.furniture-piece:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.furniture-piece .piece-icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+}
+.icon-fill svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.furniture-piece .piece-label {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  transform: translateX(-50%);
+  max-width: 92%;
+  font-size: 9px;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--color-foreground);
+  background: color-mix(in oklab, var(--color-surface) 78%, transparent);
+  border-radius: 3px;
+  padding: 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .furniture-piece.is-new {
+    animation: piece-pop .22s cubic-bezier(.16,1,.3,1);
+  }
+}
+@keyframes piece-pop {
+  from { transform: scale(.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Door dimensions and swing share the same centimetre geometry in both views. */
+.door-plan { position: absolute; inset: 0; overflow: visible; pointer-events: none; z-index: 15; }
+.door-gap { fill: var(--color-canvas); }
+.door-sweep { fill: none; stroke: var(--color-muted); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.door-leaf-plan { stroke: #856948; stroke-width: 3.5; }
+.door-hinge-plan { fill: var(--color-foreground); }
+.door-plan text { fill: var(--color-foreground); stroke: var(--color-canvas); stroke-width: 3px; paint-order: stroke; text-anchor: middle; dominant-baseline: middle; }
+
+/* Window: glass fill across the wall gap */
+.window-glass {
+  position: absolute;
+  background: color-mix(in oklab, #7dd3fc 45%, var(--color-surface));
+  border: 1px solid color-mix(in oklab, #0369a1 40%, transparent);
+}
+
+@media print {
+  body, body > div { height: auto !important; overflow: visible !important; }
+  header, aside, #view-toolbar, #room-view-status { display: none !important; }
+  #canvas-wrap { overflow: visible !important; background: none; }
+  #room-workspace { padding: 32px; min-height: 0; min-width: 0; }
+  #room-stage { filter: none; translate: none !important; }
+  #room-stage, #room-stage * { print-color-adjust: exact; }
+}

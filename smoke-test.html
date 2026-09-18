@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>房間預覽回歸檢查</title>
+<h1>家具邊界與視圖同步檢查</h1>
+<pre id="result" role="status">執行中…</pre>
+<iframe id="planner" src="index.html" title="測試用房間規劃器" style="width:100%;height:720px;border:1px solid #888"></iframe>
+<script>
+  document.getElementById('planner').addEventListener('load', async (event) => {
+    const frame = event.target;
+    const doc = frame.contentDocument;
+    const win = frame.contentWindow;
+    const get = (id) => doc.getElementById(id);
+    const piece = (id) => doc.querySelector(`#room-stage [data-id="${id}"]`);
+    const input = (id, value, kind = 'input') => {
+      get(id).value = value;
+      get(id).dispatchEvent(new win.Event(kind, { bubbles: true }));
+    };
+    const check = (condition, message) => { if (!condition) throw new Error(message); };
+    const waitForPreview = async () => {
+      for (let attempt = 0; attempt < 400; attempt++) {
+        const canvas = doc.querySelector('#room-stage canvas');
+        if (canvas) return canvas;
+        if (get('room-stage').getAttribute('aria-busy') === 'false') {
+          throw new Error(get('room-view-status').textContent);
+        }
+        await new Promise((resolve) => win.setTimeout(resolve, 50));
+      }
+      throw new Error('Three.js 預覽載入逾時');
+    };
+    // Read the real WebGL frame in the same animation frame as its scheduled draw.
+    const framePixels = () => new Promise((resolve) => win.requestAnimationFrame(() => {
+      const canvas = doc.querySelector('#room-stage canvas');
+      const gl = canvas.getContext('webgl2');
+      const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+      gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      resolve(pixels);
+    }));
+    const frameDifference = (a, b) => {
+      if (a.length !== b.length) return 1;
+      let changed = 0;
+      for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 10) changed++;
+      return changed / a.length;
+    };
+    try {
+      check(doc.querySelectorAll('.furniture-piece').length === 6, '初始化家具數量錯誤');
+      // Check the mirrored hinge and negative-coordinate outswing on a vertical wall.
+      doc.querySelector('#door-wall-picker [data-wall="left"]').click();
+      input('input-door-width', 100, 'change');
+      input('input-door-hinge', 'end', 'change');
+      input('input-door-swing', 'outward', 'change');
+      const leaf = doc.querySelector('.door-leaf-plan');
+      const tip = leaf.getPointAtLength(leaf.getTotalLength());
+      check(Math.abs(tip.x + 90) < 0.01 && Math.abs(tip.y - 125) < 0.01, '左牆終點鉸鏈外開方向或比例錯誤');
+      input('input-door-angle', 45, 'change');
+      check(get('door-measurements').textContent.includes('70.7 cm'), '45° 門扇伸出量錯誤');
+      const doorView = doc.querySelector('.door-leaf-plan').getAttribute('d');
+      get('btn-view-3d').click();
+      await waitForPreview();
+      get('btn-view-2d').click();
+      check(doc.querySelector('.door-leaf-plan').getAttribute('d') === doorView, '切換視圖改變門的開啟位置');
+      doc.querySelector('#door-wall-picker [data-wall="top"]').click();
+      input('input-door-width', 80, 'change');
+      input('input-door-hinge', 'start', 'change');
+      input('input-door-swing', 'inward', 'change');
+      input('input-door-angle', 90, 'change');
+      const overlapTop = () => {
+        const chair = piece('chair-1').getBoundingClientRect();
+        const desk = piece('desk-1').getBoundingClientRect();
+        return doc.elementFromPoint(Math.max(chair.left, desk.left) + 10,
+          Math.max(chair.top, desk.top) + 10)?.closest('[data-id]')?.dataset.id;
+      };
+      const layer = (action) => doc.querySelector(`[data-layer-action="${action}"]`).click();
+      doc.querySelector('[data-layer-id="chair-1"] .layer-select').click();
+      check(overlapTop() === 'desk-1', '選取家具不應自動置頂');
+      layer('back');
+      check(doc.querySelector('[data-layer-action="down"]').disabled, '底層仍可向下移動');
+      layer('front');
+      check(overlapTop() === 'chair-1', '置頂後未遮住書桌');
+      layer('down');
+      check(overlapTop() === 'desk-1', '下移一層未更新遮擋順序');
+      layer('up');
+      check(overlapTop() === 'chair-1', '上移一層未更新遮擋順序');
+      get('btn-view-3d').click();
+      get('btn-view-2d').click();
+      check(overlapTop() === 'chair-1', '切換視圖遺失層級');
+      layer('down');
+      const dropChair = (before) => {
+        const row = doc.querySelector('[data-layer-id="desk-1"]');
+        const rect = row.getBoundingClientRect();
+        const dataTransfer = new win.DataTransfer();
+        dataTransfer.setData('text/plain', 'chair-1');
+        const options = { bubbles: true, cancelable: true, dataTransfer,
+          clientY: before ? rect.top + 1 : rect.bottom - 1 };
+        row.dispatchEvent(new win.DragEvent('dragover', options));
+        row.dispatchEvent(new win.DragEvent('drop', options));
+      };
+      dropChair(true);
+      check(overlapTop() === 'chair-1', '拖曳到上方未置於目標前');
+      dropChair(false);
+      check(overlapTop() === 'desk-1', '拖曳到下方未置於目標後');
+      piece('bed-1').click();
+      input('input-item-x', 120);
+      get('btn-rotate-item').click();
+      check(get('input-item-x').value === '53', '旋轉後未依新 footprint 限制 X');
+      get('btn-view-3d').click();
+      doc.querySelector('[data-layer-id="bed-1"] .layer-select').click();
+      check(get('input-item-x').value === '53', '切換 3D 改變了家具座標');
+      check(get('item-inspector-title').textContent === '單人床', '3D 鍵盤選取錯誤');
+      get('btn-view-2d').click();
+      check(get('input-item-x').value === '53', '回到 2D 改變了家具座標');
+      piece('bed-1').focus();
+      for (let i = 0; i < 2; i++) {
+        doc.activeElement.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+      }
+      check(get('input-item-x').value === '51', '重繪後鍵盤焦點遺失或微調非 1 cm');
+      // Edge contact is allowed; a one-centimeter intersection must be reported.
+      piece('fan-1').click();
+      input('input-item-x', 0);
+      input('input-item-y', 100);
+      piece('drawer-1').click();
+      input('input-item-x', 34);
+      input('input-item-y', 100);
+      check(get('item-placement-status').textContent.includes('位置正常'), '接觸邊緣誤判為重疊');
+      input('input-item-x', 33);
+      check(get('item-placement-status').textContent.includes('與其他家具重疊'), '漏掉 1 cm 重疊');
+      check(piece('fan-1').classList.contains('is-overlapping'), '未標示另一件重疊家具');
+      input('input-item-x', 34);
+      check(!piece('fan-1').classList.contains('is-overlapping'), '移開後未清除重疊提示');
+      get('room-stage').click();
+      input('input-room-width', 150, 'change');
+      check(get('input-room-width').value === '150', '房間實測尺寸被家具大小覆蓋');
+      piece('bed-1').click();
+      check(get('input-item-x').value === '0', '縮小房間後家具座標未限制');
+      check(piece('bed-1').classList.contains('is-outside'), '超尺寸家具沒有越界提示');
+      const footprintRatio = () => {
+        const bed = piece('bed-1').getBoundingClientRect();
+        const floor = doc.querySelector('.room-2d-floor').getBoundingClientRect();
+        return { width: bed.width / floor.width, depth: bed.height / floor.height };
+      };
+      check(Math.abs(footprintRatio().width - 190 / 150) < 0.001, '超尺寸家具被縮小而非依實際尺寸顯示');
+      input('input-item-width', 90, 'change');
+      input('input-item-depth', 120.5, 'change');
+      input('input-item-height', 70, 'change');
+      check(Math.abs(footprintRatio().width - 120.5 / 150) < 0.001
+        && Math.abs(footprintRatio().depth - 90 / 264) < 0.001, '旋轉後實際家具寬深比例錯誤');
+      check(!piece('bed-1').classList.contains('is-outside'), '縮小家具後越界提示未清除');
+      input('input-item-width', 0, 'change');
+      check(!get('input-item-width').validity.valid
+        && Math.abs(footprintRatio().depth - 90 / 264) < 0.001, '無效尺寸改變了家具');
+      input('input-item-width', 90, 'change');
+      input('input-item-height', 300, 'change');
+      check(piece('bed-1').classList.contains('is-outside'), '高於天花板未提示');
+      get('btn-select-room').click();
+      input('input-room-height', 320, 'change');
+      check(!piece('bed-1').classList.contains('is-outside'), '室內高度未同步');
+      doc.querySelector('[data-layer-id="bed-1"] .layer-select').click();
+      get('btn-view-3d').click();
+      await waitForPreview();
+      get('btn-zoom-reset').click();
+      const initialView = await framePixels();
+      check(initialView.some((value, index) => index % 4 === 3 && value > 0), 'WebGL 畫面未繪製');
+      const position = [get('input-item-x').value, get('input-item-y').value];
+      const stage = get('room-stage');
+      stage.focus();
+      stage.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }));
+      stage.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+      const rotatedView = await framePixels();
+      check(frameDifference(initialView, rotatedView) > 0.001, '方向鍵未改變 3D 視角');
+      check(position[0] === get('input-item-x').value && position[1] === get('input-item-y').value, '轉動視角改變了家具座標');
+      get('btn-view-2d').click();
+      get('btn-view-3d').click();
+      check(frameDifference(rotatedView, await framePixels()) < 0.001, '切換視圖遺失觀看角度');
+      stage.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+      check(frameDifference(initialView, await framePixels()) < 0.001, 'Home 未還原初始視角');
+      stage.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true }));
+      check(frameDifference(initialView, await framePixels()) > 0.001, '鍵盤平移未改變 3D 畫面');
+      stage.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+      const wheel = new win.WheelEvent('wheel', { deltaY: -160, bubbles: true, cancelable: true });
+      doc.querySelector('#room-stage canvas').dispatchEvent(wheel);
+      await new Promise((resolve) => win.requestAnimationFrame(resolve));
+      check(wheel.defaultPrevented && parseInt(get('zoom-label').textContent) > 100, '滾輪未縮放預覽');
+      check(position[0] === get('input-item-x').value && position[1] === get('input-item-y').value, '平移縮放改變了家具座標');
+      get('btn-zoom-reset').click();
+      check(frameDifference(initialView, await framePixels()) < 0.001, '重設後未還原平移與縮放');
+      win.dispatchEvent(new win.Event('beforeprint'));
+      check(!doc.querySelector('#room-stage canvas'), '列印前未切回 2D');
+      win.dispatchEvent(new win.Event('afterprint'));
+      check(!!doc.querySelector('#room-stage canvas'), '列印後未還原 3D');
+      document.getElementById('result').textContent = 'PASS：門扇角度與投影、滾輪縮放、平移、3D 視角、圖層拖曳、實測尺寸比例、超尺寸提示、旋轉、鍵盤操作、重疊邊界、列印還原';
+    } catch (error) {
+      document.getElementById('result').textContent = 'FAIL：' + error.message;
+      console.error(error);
+    }
+  }, { once: true });
+</script>
+</html>

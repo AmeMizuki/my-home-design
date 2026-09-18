@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="h-full">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>格局規劃工具</title>
+<meta name="description" content="調整家具擺設、壁紙、地板與房間格局的平面規劃工具" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/regular/style.css" />
+
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<style type="text/tailwindcss">
+  @custom-variant hs-dropdown-open (&.open);
+  @custom-variant hs-overlay-open (&.open);
+  @custom-variant hs-tooltip-shown (&.show);
+  @custom-variant hs-tab-active (&.active);
+
+  @theme {
+    --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+
+    --color-canvas: #f4f4f5;
+    --color-surface: #ffffff;
+    --color-surface-hover: #f4f4f5;
+    --color-border: #e4e4e7;
+    --color-foreground: #18181b;
+    --color-muted: #71717a;
+    --color-primary: #2563eb;
+    --color-primary-hover: #1d4ed8;
+    --color-primary-foreground: #ffffff;
+    --color-danger: #dc2626;
+    --color-danger-hover: #b91c1c;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --color-canvas: #0a0a0b;
+      --color-surface: #18181b;
+      --color-surface-hover: #232326;
+      --color-border: #2c2c31;
+      --color-foreground: #f4f4f5;
+      --color-muted: #a1a1aa;
+      --color-primary: #3b82f6;
+      --color-primary-hover: #60a5fa;
+      --color-primary-foreground: #0a0a0b;
+      --color-danger: #f87171;
+      --color-danger-hover: #fca5a5;
+    }
+  }
+
+  html { color-scheme: light dark; }
+  body { font-family: var(--font-sans); background: var(--color-canvas); color: var(--color-foreground); }
+</style>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body class="h-full overflow-hidden text-sm antialiased">
+
+<div class="h-full flex flex-col">
+
+  <!-- Topbar -->
+  <header class="h-14 shrink-0 flex items-center justify-between gap-3 px-3 sm:px-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm z-30">
+    <div class="flex items-center gap-2 min-w-0">
+      <button type="button" class="lg:hidden shrink-0 size-9 inline-flex items-center justify-center rounded-lg text-[var(--color-muted)] transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+        aria-haspopup="dialog" aria-expanded="false" aria-controls="panel-left" data-hs-overlay="#panel-left" aria-label="開啟工具面板">
+        <i class="ph ph-squares-four text-lg"></i>
+      </button>
+      <div class="flex items-center gap-2 min-w-0">
+        <i class="ph ph-ruler text-lg text-[var(--color-primary)] shrink-0"></i>
+        <h1 class="text-sm font-semibold tracking-tight truncate">格局規劃工具</h1>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <!-- 2D / 3D toggle -->
+      <div class="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 bg-[var(--color-canvas)]">
+        <button type="button" id="btn-view-2d" aria-controls="room-stage" aria-label="2D 平面" aria-pressed="true" class="view-toggle-btn px-2 sm:px-3 py-1.5 text-xs font-medium rounded-md text-[var(--color-muted)] transition-colors aria-pressed:bg-[var(--color-primary)] aria-pressed:text-[var(--color-primary-foreground)]">
+          2D<span class="hidden sm:inline"> 平面</span>
+        </button>
+        <button type="button" id="btn-view-3d" aria-controls="room-stage" aria-label="3D 預覽" aria-pressed="false" class="view-toggle-btn px-2 sm:px-3 py-1.5 text-xs font-medium rounded-md text-[var(--color-muted)] transition-colors aria-pressed:bg-[var(--color-primary)] aria-pressed:text-[var(--color-primary-foreground)]">
+          3D<span class="hidden sm:inline"> 預覽</span>
+        </button>
+      </div>
+
+      <button type="button" id="btn-reset-room" class="size-9 inline-flex items-center justify-center rounded-lg text-[var(--color-muted)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+        aria-haspopup="dialog" aria-expanded="false" aria-controls="modal-reset" data-hs-overlay="#modal-reset" aria-label="重置房間">
+        <i class="ph ph-arrow-counter-clockwise text-lg"></i>
+      </button>
+
+      <!-- Export dropdown -->
+      <div class="hs-dropdown relative inline-flex [--placement:bottom-end]">
+        <button type="button" class="hs-dropdown-toggle inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+          aria-haspopup="menu" aria-expanded="false" aria-label="匯出">
+          <i class="ph ph-export text-base"></i>
+          <span class="hidden sm:inline">匯出</span>
+          <i class="ph ph-caret-down text-xs hs-dropdown-open:rotate-180 transition-transform"></i>
+        </button>
+        <div class="hs-dropdown-menu hs-dropdown-open:opacity-100 transition-opacity opacity-0 hidden min-w-52 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg mt-2 p-1" role="menu">
+          <button type="button" id="btn-copy-json" role="menuitem" class="w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+            <i class="ph ph-copy text-base text-[var(--color-muted)]"></i>
+            <span>複製版面設定 (JSON)</span>
+          </button>
+          <button type="button" id="btn-print" role="menuitem" class="w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+            <i class="ph ph-printer text-base text-[var(--color-muted)]"></i>
+            <span>列印平面圖</span>
+          </button>
+        </div>
+      </div>
+
+      <button type="button" class="lg:hidden size-9 inline-flex items-center justify-center rounded-lg text-[var(--color-muted)] transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]"
+        aria-haspopup="dialog" aria-expanded="false" aria-controls="panel-right" data-hs-overlay="#panel-right" aria-label="開啟屬性面板">
+        <i class="ph ph-sliders-horizontal text-lg"></i>
+      </button>
+    </div>
+  </header>
+
+  <div class="flex-1 flex min-h-0 relative">
+
+    <!-- Left panel: furniture / wallpaper / floor -->
+    <aside id="panel-left"
+      class="hs-overlay hidden -translate-x-full fixed inset-y-0 left-0 z-40 w-80 max-w-[85vw] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] transition-transform duration-200 hs-overlay-open:translate-x-0 lg:static lg:flex lg:z-auto lg:w-80 lg:translate-x-0 lg:max-w-none"
+      role="dialog" tabindex="-1" aria-label="編輯工具面板">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)] lg:hidden">
+        <h2 class="text-sm font-semibold">編輯工具</h2>
+        <button type="button" class="size-8 inline-flex items-center justify-center rounded-full transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" data-hs-overlay="#panel-left" aria-label="關閉">
+          <i class="ph ph-x"></i>
+        </button>
+      </div>
+
+      <nav id="left-tabs" class="flex border-b border-[var(--color-border)] shrink-0" role="tablist" aria-label="編輯類別">
+        <button type="button" id="tab-btn-furniture" data-hs-tab="#tab-furniture" aria-controls="tab-furniture" role="tab" aria-selected="true"
+          class="tab-btn active flex-1 flex flex-col items-center gap-1 py-2.5 text-xs font-medium text-[var(--color-muted)] border-b-2 border-transparent hs-tab-active:text-[var(--color-primary)] hs-tab-active:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]">
+          <i class="ph ph-armchair text-base"></i>家具
+        </button>
+        <button type="button" id="tab-btn-wallpaper" data-hs-tab="#tab-wallpaper" aria-controls="tab-wallpaper" role="tab" aria-selected="false"
+          class="tab-btn flex-1 flex flex-col items-center gap-1 py-2.5 text-xs font-medium text-[var(--color-muted)] border-b-2 border-transparent hs-tab-active:text-[var(--color-primary)] hs-tab-active:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]">
+          <i class="ph ph-paint-roller text-base"></i>壁紙
+        </button>
+        <button type="button" id="tab-btn-floor" data-hs-tab="#tab-floor" aria-controls="tab-floor" role="tab" aria-selected="false"
+          class="tab-btn flex-1 flex flex-col items-center gap-1 py-2.5 text-xs font-medium text-[var(--color-muted)] border-b-2 border-transparent hs-tab-active:text-[var(--color-primary)] hs-tab-active:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-primary)]">
+          <i class="ph ph-squares-four text-base"></i>地板
+        </button>
+      </nav>
+
+      <div class="flex-1 overflow-y-auto app-scroll p-3">
+        <div id="tab-furniture" role="tabpanel" aria-labelledby="tab-btn-furniture" class="space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <h2 class="text-xs font-semibold">家具圖層</h2>
+            <button type="button" id="btn-select-room" class="rounded-md border border-[var(--color-border)] px-2 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">房間設定</button>
+          </div>
+          <p class="text-xs text-[var(--color-muted)]">由上至下為遮擋順序。拖曳圖層排序，或選取後用按鈕調整；不改變 3D 高度。</p>
+          <ol id="furniture-layers" class="space-y-1" aria-label="家具圖層，由上至下"></ol>
+          <p id="item-layer-status" role="status" class="text-xs text-[var(--color-muted)]"></p>
+          <details>
+            <summary class="cursor-pointer rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">新增家具</summary>
+            <div id="furniture-catalog" class="space-y-1 mt-2"></div>
+          </details>
+        </div>
+        <div id="tab-wallpaper" role="tabpanel" aria-labelledby="tab-btn-wallpaper" class="hidden">
+          <p class="text-xs text-[var(--color-muted)] mb-3">點選色票套用於牆面</p>
+          <div id="wallpaper-grid" class="grid grid-cols-3 gap-2"></div>
+        </div>
+        <div id="tab-floor" role="tabpanel" aria-labelledby="tab-btn-floor" class="hidden">
+          <p class="text-xs text-[var(--color-muted)] mb-3">點選材質套用於地板</p>
+          <div id="floor-grid" class="grid grid-cols-3 gap-2"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Center: canvas -->
+    <main id="canvas-wrap" class="flex-1 min-w-0 relative overflow-auto app-scroll bg-[var(--color-canvas)] canvas-surface">
+      <div id="room-workspace" class="min-h-full min-w-full flex items-center justify-center p-16">
+        <div id="room-stage" class="relative"></div>
+      </div>
+
+      <p id="room-view-status" role="status" aria-live="polite"></p>
+      <div id="view-toolbar" class="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-md">
+        <button type="button" id="btn-snap-grid" aria-pressed="true" class="view-toggle-btn rounded-md px-2 py-1.5 text-xs text-[var(--color-muted)] aria-pressed:bg-[var(--color-primary)] aria-pressed:text-[var(--color-primary-foreground)]">拖曳吸附 5 cm</button>
+        <button type="button" id="btn-zoom-out" class="size-7 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" aria-label="縮小">
+          <i class="ph ph-minus text-sm"></i>
+        </button>
+        <span id="zoom-label" class="w-12 text-center text-xs font-[var(--font-mono)] tabular-nums text-[var(--color-muted)]">100%</span>
+        <button type="button" id="btn-zoom-in" class="size-7 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" aria-label="放大">
+          <i class="ph ph-plus text-sm"></i>
+        </button>
+        <div class="w-px h-4 bg-[var(--color-border)] mx-0.5"></div>
+        <button type="button" id="btn-zoom-reset" class="size-7 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" aria-label="重設縮放">
+          <i class="ph ph-arrows-out-simple text-sm"></i>
+        </button>
+      </div>
+    </main>
+
+    <!-- Right panel: inspector -->
+    <aside id="panel-right"
+      class="hs-overlay hidden translate-x-full fixed inset-y-0 right-0 z-40 w-80 max-w-[85vw] flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] transition-transform duration-200 hs-overlay-open:translate-x-0 lg:static lg:flex lg:z-auto lg:w-80 lg:translate-x-0 lg:max-w-none"
+      role="dialog" tabindex="-1" aria-label="屬性面板">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)] lg:hidden">
+        <h2 class="text-sm font-semibold">屬性</h2>
+        <button type="button" class="size-8 inline-flex items-center justify-center rounded-full transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" data-hs-overlay="#panel-right" aria-label="關閉">
+          <i class="ph ph-x"></i>
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto app-scroll p-4 space-y-6">
+
+        <!-- Room settings (default view) -->
+        <section id="room-settings-section" class="space-y-6">
+          <div>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)] mb-3">房間尺寸</h3>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">室內寬度 (cm)</span>
+                <input id="input-room-width" type="number" min="1" max="10000" step="0.1" required
+                  class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">室內深度 (cm)</span>
+                <input id="input-room-depth" type="number" min="1" max="10000" step="0.1" required
+                  class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">室內高度 (cm)</span>
+                <input id="input-room-height" type="number" min="1" max="10000" step="0.1" required class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">牆厚 (cm)</span>
+                <input id="input-room-wallThickness" type="number" min="1" max="1000" step="0.1" required class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+            </div>
+            <p class="mt-2 text-xs text-[var(--color-muted)]">寬深為內牆淨尺寸，門寬高與家具外尺寸請依實測修正。3D 家具細節、門厚 3.5 cm 與窗戶立面為示意。</p>
+          </div>
+
+          <div>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)] mb-3">門</h3>
+            <div id="door-wall-picker" class="grid grid-cols-4 gap-1.5 mb-3"></div>
+            <label class="block">
+              <span class="flex justify-between text-xs text-[var(--color-muted)] mb-1">
+                <span>門洞起點沿牆位置</span>
+                <span id="door-pos-label" class="font-[var(--font-mono)] tabular-nums">0 cm</span>
+              </span>
+              <input id="input-door-pos" type="range" min="0" max="100" step="0.1" aria-describedby="door-wall-reference" class="app-range w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2" />
+            </label>
+            <p id="door-wall-reference" class="mt-1 text-xs text-[var(--color-muted)]">上／下牆從左往右；左／右牆從上往下。位置量至門洞起點。</p>
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">門寬 (cm)</span>
+                <input id="input-door-width" type="number" min="1" max="10000" step="0.1" required class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">門高 (cm)</span>
+                <input id="input-door-height" type="number" min="1" max="10000" step="0.1" required class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">開門角度 (°)</span>
+                <input id="input-door-angle" type="number" min="0" max="180" step="1" required aria-describedby="door-measurement-note" class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">開啟方向</span>
+                <select id="input-door-swing" class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+                  <option value="inward">內開</option>
+                  <option value="outward">外開</option>
+                </select>
+              </label>
+            </div>
+            <label class="block mt-3">
+              <span class="block text-xs text-[var(--color-muted)] mb-1">鉸鏈端（沿牆方向）</span>
+              <select id="input-door-hinge" aria-describedby="door-wall-reference" class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+                <option value="start">起點端（左／上）</option>
+                <option value="end">終點端（右／下）</option>
+              </select>
+            </label>
+            <p id="door-measurements" role="status" class="mt-3 text-xs font-[var(--font-mono)] tabular-nums"></p>
+            <p id="door-measurement-note" class="mt-1 text-xs text-[var(--color-muted)]">0° 為關門，180° 為貼牆全開。垂直伸出量為目前門扇中心線的平面投影，不是淨通行寬度或碰撞檢查。改小房間或換牆時，門寬高與位置會限制在牆內。</p>
+          </div>
+
+          <div>
+            <h3 class="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)] mb-3">窗戶</h3>
+            <div id="window-wall-picker" class="grid grid-cols-4 gap-1.5 mb-3"></div>
+            <label class="block">
+              <span class="flex justify-between text-xs text-[var(--color-muted)] mb-1">
+                <span>沿牆位置</span>
+                <span id="window-pos-label" class="font-[var(--font-mono)] tabular-nums">0 cm</span>
+              </span>
+              <input id="input-window-pos" type="range" min="0" max="100" step="1" class="app-range w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] focus-visible:ring-offset-2" />
+            </label>
+          </div>
+        </section>
+
+        <!-- Item inspector (shown when a furniture piece is selected) -->
+        <section id="item-inspector-section" class="hidden space-y-5">
+          <div class="flex items-center justify-between">
+            <div>
+              <h3 id="item-inspector-title" class="text-sm font-semibold"></h3>
+              <p id="item-inspector-dims" class="text-xs text-[var(--color-muted)] font-[var(--font-mono)] tabular-nums"></p>
+            </div>
+            <button type="button" id="btn-delete-item" class="size-8 inline-flex items-center justify-center rounded-full text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-danger)]" aria-label="刪除家具">
+              <i class="ph ph-trash text-base"></i>
+            </button>
+          </div>
+          <p id="item-placement-status" role="status" class="flex items-center gap-1.5 text-xs text-[var(--color-muted)]" hidden><i aria-hidden="true"></i><span></span></p>
+          <fieldset>
+            <legend class="text-xs font-semibold text-[var(--color-muted)] mb-2">實際家具尺寸</legend>
+            <div class="grid grid-cols-3 gap-2">
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">寬 (cm)</span>
+                <input id="input-item-width" type="number" min="1" max="10000" step="0.1" required class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">深 (cm)</span>
+                <input id="input-item-depth" type="number" min="1" max="10000" step="0.1" required class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+              <label class="block">
+                <span class="block text-xs text-[var(--color-muted)] mb-1">高 (cm)</span>
+                <input id="input-item-height" type="number" min="1" max="10000" step="0.1" required class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+              </label>
+            </div>
+            <p class="mt-2 text-xs text-[var(--color-muted)]">輸入實測公分數，旋轉只改方向、不交換原始寬深；超出房間會提示，不縮小家具。</p>
+          </fieldset>
+
+          <div class="grid grid-cols-2 gap-3">
+            <label class="block">
+              <span class="block text-xs text-[var(--color-muted)] mb-1">X (cm)</span>
+              <input id="input-item-x" type="number" min="0" step="0.1"
+                class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+            </label>
+            <label class="block">
+              <span class="block text-xs text-[var(--color-muted)] mb-1">Y (cm)</span>
+              <input id="input-item-y" type="number" min="0" step="0.1"
+                class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm font-[var(--font-mono)] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" />
+            </label>
+          </div>
+
+          <button type="button" id="btn-rotate-item" class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+            <i class="ph ph-arrow-clockwise text-base"></i>
+            旋轉 90°
+          </button>
+
+
+          <p class="text-xs text-[var(--color-muted)] leading-relaxed">
+            拖曳時可吸附 5 cm；輸入 X/Y 或使用方向鍵微調 1 cm，Shift＋方向鍵移動 10 cm，Delete 刪除。尺寸同步至 2D／3D，位置請回到 2D 調整。
+          </p>
+        </section>
+
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- Reset confirmation modal -->
+<div id="modal-reset" class="hs-overlay hs-overlay-open:opacity-100 group hidden opacity-0 transition-opacity fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" tabindex="-1" aria-labelledby="modal-reset-title">
+  <div class="w-full max-w-sm rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-xl p-5 scale-95 opacity-0 group-[.open]:scale-100 group-[.open]:opacity-100 transition-all duration-200">
+    <div class="flex items-start gap-3">
+      <div class="shrink-0 size-9 rounded-full bg-[var(--color-danger)]/10 text-[var(--color-danger)] flex items-center justify-center">
+        <i class="ph ph-warning text-lg"></i>
+      </div>
+      <div class="min-w-0">
+        <h3 id="modal-reset-title" class="text-sm font-semibold">重置房間？</h3>
+        <p class="text-xs text-[var(--color-muted)] mt-1">將清除目前所有家具擺設、壁紙與地板設定，恢復預設格局。此動作無法復原。</p>
+      </div>
+    </div>
+    <div class="mt-5 flex justify-end gap-2">
+      <button type="button" class="rounded-lg px-3.5 py-2 text-xs font-medium transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" data-hs-overlay="#modal-reset">
+        取消
+      </button>
+      <button type="button" id="btn-confirm-reset" class="rounded-lg bg-[var(--color-danger)] px-3.5 py-2 text-xs font-medium text-white hover:bg-[var(--color-danger-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-danger)]" data-hs-overlay="#modal-reset">
+        確定重置
+      </button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/preline/dist/index.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"
+  }
+}
+</script>
+<script src="app.js"></script>
+</body>
+</html>
