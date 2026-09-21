@@ -332,14 +332,23 @@
             </label>
           </div>
 
+          <label class="block">
+            <span class="block text-xs text-[var(--color-muted)] mb-1">家具朝向</span>
+            <select id="input-item-rotation" aria-describedby="item-rotation-note" class="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+              <option value="0">0°（原始方向）</option>
+              <option value="90">90°</option>
+              <option value="180">180°（反向）</option>
+              <option value="270">270°</option>
+            </select>
+          </label>
           <button type="button" id="btn-rotate-item" class="w-full inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm font-medium transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
-            <i class="ph ph-arrow-clockwise text-base"></i>
-            旋轉 90°
+            <i class="ph ph-arrow-clockwise text-base" aria-hidden="true"></i>
+            順時針旋轉 90°
           </button>
 
-
+          <p id="item-rotation-note" class="text-xs text-[var(--color-muted)] leading-relaxed">角度以 2D 平面順時針計算；選 180° 可轉向另一側。旋轉後若超出邊界，會自動調整位置。</p>
           <p class="text-xs text-[var(--color-muted)] leading-relaxed">
-            拖曳時可吸附 5 cm；輸入 X/Y 或使用方向鍵微調 1 cm，Shift＋方向鍵移動 10 cm，Delete 刪除。尺寸同步至 2D／3D，位置請回到 2D 調整。
+            拖曳時可吸附 5 cm；輸入 X/Y 或使用方向鍵微調 1 cm，Shift＋方向鍵移動 10 cm，R 旋轉，Delete 刪除。尺寸與朝向可在 2D／3D 調整，位置請回到 2D 調整。
           </p>
         </section>
 

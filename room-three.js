@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createFurnitureBuilder } from './furniture-three.js';
 
 const clamp = THREE.MathUtils.clamp;
@@ -23,12 +24,15 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2;
+  renderer.toneMappingExposure = 1;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
 
   const scene = new THREE.Scene();
+  let environmentMap;
+  scene.environmentIntensity = 0.3;
+  updateEnvironment();
   const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 20000);
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = false;
@@ -46,8 +50,8 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   furniture.name = 'Furniture';
   markings.name = 'Placement outlines';
   scene.add(architecture, furniture, markings);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x84745e, 2.4));
-  const light = new THREE.DirectionalLight(0xfff5e5, 3);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x84745e, 0.8));
+  const light = new THREE.DirectionalLight(0xfff5e5, 2.5);
   light.castShadow = true;
   light.shadow.mapSize.set(2048, 2048);
   light.shadow.bias = -0.0002;
@@ -71,6 +75,8 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   const overlapMaterial = new THREE.LineDashedMaterial({ color: tokens.getPropertyValue('--color-muted').trim() || '#71717a', dashSize: 6, gapSize: 3, depthTest: false });
   const outsideMaterial = new THREE.LineDashedMaterial({ color: tokens.getPropertyValue('--color-danger').trim() || '#dc2626', dashSize: 2, gapSize: 3, depthTest: false });
   const wallGroups = new Map();
+  const furnitureModels = new Map();
+  let architectureKey = '';
   const center = new THREE.Vector3();
   const offset = new THREE.Vector3();
   const direction = new THREE.Vector3();
@@ -91,7 +97,21 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   let width = 1;
   let height = 1;
   let bounds = null;
+  let pixelRatio = 0;
   let wallThickness = 0;
+
+  function updateEnvironment() {
+    environmentMap?.dispose();
+    const room = new RoomEnvironment();
+    const generator = new THREE.PMREMGenerator(renderer);
+    try {
+      environmentMap = generator.fromScene(room);
+      scene.environment = environmentMap.texture;
+    } finally {
+      room.dispose();
+      generator.dispose();
+    }
+  }
 
   function material(name, color, extra = {}) {
     if (!materials.has(name)) materials.set(name, new THREE.MeshStandardMaterial({ color, roughness: 0.82, ...extra }));
@@ -202,10 +222,11 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   }
 
   function buildRoom(state, options) {
+    const key = JSON.stringify([state.room, state.door, state.window, state.floor, options.wallColor]);
+    if (key === architectureKey) return;
+    architectureKey = key;
     architecture.clear();
-    furniture.clear(); // Builder caches are intentionally NOT disposed here.
-    for (const line of markings.children) line.geometry.dispose();
-    markings.clear();
+    renderer.shadowMap.needsUpdate = true;
     wallGroups.clear();
     const room = state.room;
     const t = room.wallThickness;
@@ -268,17 +289,40 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
       knob.castShadow = true;
       door.add(knob);
     }
+  }
+
+  function updateFurniture(state, options) {
+    const ids = new Set(state.items.map((item) => item.id));
+    for (const [id, model] of furnitureModels) {
+      if (ids.has(id)) continue;
+      furniture.remove(model.group);
+      furnitureModels.delete(id);
+      renderer.shadowMap.needsUpdate = true;
+    }
+    for (const line of markings.children) line.geometry.dispose();
+    markings.clear();
     const overlapping = new Set(options.overlappingIds);
     const outside = new Set(options.outsideIds);
     for (const item of state.items) {
-      const w = item.rot === 90 ? item.h : item.w;
-      const d = item.rot === 90 ? item.w : item.h;
-      const group = furnitureBuilder.build(item);
+      const w = item.rot % 180 === 90 ? item.h : item.w;
+      const d = item.rot % 180 === 90 ? item.w : item.h;
+      let model = furnitureModels.get(item.id);
+      const previous = model?.item;
+      if (!previous || ['type', 'w', 'h', 'height'].some((key) => previous[key] !== item[key])) {
+        if (model) furniture.remove(model.group);
+        model = { group: furnitureBuilder.build(item) };
+        furnitureModels.set(item.id, model);
+        furniture.add(model.group);
+        renderer.shadowMap.needsUpdate = true;
+      }
+      const group = model.group;
       group.name = item.label;
-      group.userData.itemId = item.id;
+      if (!previous || ['x', 'y', 'rot'].some((key) => previous[key] !== item[key])) {
+        renderer.shadowMap.needsUpdate = true;
+      }
       group.position.set(item.x + w / 2, 0, item.y + d / 2);
       group.rotation.y = -radians(item.rot);
-      furniture.add(group);
+      model.item = { ...item };
       if (overlapping.has(item.id)) outline(item, w, d, 2, overlapMaterial);
       if (outside.has(item.id)) outline(item, w, d, 4, outsideMaterial);
       if (item.id === state.selectedId) outline(item, w, d, 0, selectionMaterial);
@@ -298,7 +342,13 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   function cutaway() {
     direction.subVectors(camera.position, controls.target);
     const facing = { top: -direction.z, bottom: direction.z, left: -direction.x, right: direction.x };
-    for (const [side, group] of wallGroups) group.visible = facing[side] <= 0;
+    for (const [side, group] of wallGroups) {
+      const next = facing[side] <= 0;
+      if (group.visible !== next) {
+        group.visible = next;
+        renderer.shadowMap.needsUpdate = true;
+      }
+    }
   }
 
   function requestRender() {
@@ -307,7 +357,6 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
       frame = null;
       if (!visible || contextLost || disposed) return;
       cutaway();
-      renderer.shadowMap.needsUpdate = true;
       try {
         renderer.render(scene, camera);
       } catch (error) {
@@ -331,7 +380,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     controls.minDistance = fitDistance / 4;
     controls.maxDistance = fitDistance / 0.25;
     offset.subVectors(camera.position, controls.target);
-    if (offset.lengthSq() === 0) offset.setFromSphericalCoords(1, radians(58), radians(-2));
+    if (offset.lengthSq() === 0) offset.setFromSphericalCoords(1, radians(58), radians(-32));
     offset.setLength(fitDistance / currentZoom);
     camera.position.copy(controls.target).add(offset);
     controls.update();
@@ -354,6 +403,9 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   function update(state, options) {
     if (disposed) return;
     buildRoom(state, options);
+    updateFurniture(state, options);
+    if (!bounds || Object.keys(options.bounds).some((key) => bounds[key] !== options.bounds[key])
+      || wallThickness !== state.room.wallThickness) renderer.shadowMap.needsUpdate = true;
     bounds = { ...options.bounds };
     wallThickness = state.room.wallThickness;
     currentZoom = clamp(options.zoom ?? currentZoom, 0.25, 4);
@@ -361,12 +413,12 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     center.set(bounds.minX + bounds.width / 2, bounds.height / 2, bounds.minY + bounds.depth / 2);
     offset.subVectors(camera.position, controls.target);
     controls.target.copy(center).add(pan);
-    if (!initialized) offset.setFromSphericalCoords(1, radians(58), radians(-2));
+    if (!initialized) offset.setFromSphericalCoords(1, radians(58), radians(-32));
     camera.position.copy(controls.target).add(offset);
     initialized = true;
     const radius = Math.hypot(bounds.width, bounds.depth, bounds.height) / 2 + wallThickness;
     light.target.position.copy(center);
-    light.position.copy(center).add(new THREE.Vector3(-radius, radius * 2, radius));
+    light.position.set(center.x - radius, center.y + radius * 2, center.z + radius);
     const shadow = light.shadow.camera;
     shadow.left = shadow.bottom = -radius * 1.25;
     shadow.right = shadow.top = radius * 1.25;
@@ -378,10 +430,14 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
 
   function resize(nextWidth, nextHeight) {
     if (disposed) return;
-    width = Math.max(1, nextWidth);
-    height = Math.max(1, nextHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.setSize(width, height, false);
+    nextWidth = Math.max(1, nextWidth);
+    nextHeight = Math.max(1, nextHeight);
+    const nextRatio = Math.min(window.devicePixelRatio || 1, 2);
+    if (width === nextWidth && height === nextHeight && pixelRatio === nextRatio) return;
+    width = nextWidth;
+    height = nextHeight;
+    pixelRatio = nextRatio;
+    renderer.setDrawingBufferSize(width, height, pixelRatio);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     fit();
@@ -398,7 +454,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     if (disposed) return;
     currentZoom = clamp(zoom, 0.25, 4);
     controls.target.copy(center);
-    offset.setFromSphericalCoords(fitDistance / currentZoom, radians(58), radians(-2));
+    offset.setFromSphericalCoords(fitDistance / currentZoom, radians(58), radians(-32));
     camera.position.copy(center).add(offset);
     placeCamera();
     onZoom?.(currentZoom);
@@ -506,6 +562,8 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   function restoredContext() {
     if (disposed) return;
     contextLost = false;
+    renderer.shadowMap.needsUpdate = true;
+    updateEnvironment();
     controls.enabled = visible;
     // WebGLRenderer restores its internals; retained CPU geometries/textures re-upload on render.
     for (const map of textures) map.needsUpdate = true;
@@ -533,6 +591,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     window.removeEventListener('resize', windowResize);
     furnitureBuilder.dispose();
     for (const line of markings.children) line.geometry.dispose();
+    furnitureModels.clear();
     cube.dispose();
     plane.dispose();
     sphere.dispose();
@@ -540,6 +599,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     for (const mat of [selectionMaterial, overlapMaterial, outsideMaterial]) mat.dispose();
     for (const map of textures) map.dispose();
     light.shadow.dispose();
+    environmentMap.dispose();
     scene.clear();
     renderer.dispose();
     renderer.forceContextLoss();

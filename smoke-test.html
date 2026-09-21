@@ -58,6 +58,33 @@
       const doorView = doc.querySelector('.door-leaf-plan').getAttribute('d');
       get('btn-view-3d').click();
       await waitForPreview();
+      doc.querySelector('[data-layer-id="wardrobe-1"] .layer-select').click();
+      const originalFacing = await framePixels();
+      let quarterTurn;
+      for (const angle of [90, 180, 270]) {
+        get('btn-rotate-item').click();
+        check(get('input-item-rotation').value === String(angle), `3D 家具無法轉至 ${angle}°`);
+        quarterTurn = await framePixels();
+        check(frameDifference(originalFacing, quarterTurn) > 0.0001, `${angle}° 未改變家具實際面向`);
+      }
+      get('btn-view-2d').click();
+      const wardrobeRatio = () => {
+        const wardrobe = piece('wardrobe-1').getBoundingClientRect();
+        const floor = doc.querySelector('.room-2d-floor').getBoundingClientRect();
+        return [wardrobe.width / floor.width, wardrobe.height / floor.height];
+      };
+      check(Math.abs(wardrobeRatio()[0] - 59 / 243) < 0.001
+        && Math.abs(wardrobeRatio()[1] - 81 / 264) < 0.001, '270° 未交換佔地寬深');
+      input('input-item-rotation', 180, 'change');
+      check(Math.abs(wardrobeRatio()[0] - 81 / 243) < 0.001
+        && Math.abs(wardrobeRatio()[1] - 59 / 264) < 0.001, '180° 改變了佔地尺寸');
+      input('input-item-rotation', 270, 'change');
+      get('btn-view-3d').click();
+      check(frameDifference(quarterTurn, await framePixels()) < 0.001, '切換視圖遺失 270° 朝向或位置');
+      get('btn-rotate-item').click();
+      check(get('input-item-rotation').value === '0'
+        && frameDifference(originalFacing, await framePixels()) < 0.001, '旋轉一圈未還原家具與陰影');
+      get('btn-select-room').click();
       get('btn-view-2d').click();
       check(doc.querySelector('.door-leaf-plan').getAttribute('d') === doorView, '切換視圖改變門的開啟位置');
       doc.querySelector('#door-wall-picker [data-wall="top"]').click();
@@ -161,6 +188,18 @@
       get('btn-zoom-reset').click();
       const initialView = await framePixels();
       check(initialView.some((value, index) => index % 4 === 3 && value > 0), 'WebGL 畫面未繪製');
+      // Cached geometry must still reflect edits, including shadows, without switching views.
+      for (const [id, value, kind] of [
+        ['input-item-height', 80, 'change'],
+        ['input-item-depth', 100, 'change'],
+        ['input-item-x', 20, 'input'],
+      ]) {
+        const original = get(id).value;
+        input(id, value, kind);
+        check(frameDifference(initialView, await framePixels()) > 0.001, `${id} 未更新 3D 畫面`);
+        input(id, original, kind);
+        check(frameDifference(initialView, await framePixels()) < 0.001, `${id} 還原後模型或陰影不同步`);
+      }
       const position = [get('input-item-x').value, get('input-item-y').value];
       const stage = get('room-stage');
       stage.focus();

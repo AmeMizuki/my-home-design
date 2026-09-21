@@ -178,7 +178,7 @@
   };
   const wallIsHorizontal = (wall) => wall === 'top' || wall === 'bottom';
   const wallLength = (wall) => (wallIsHorizontal(wall) ? state.room.width : state.room.depth);
-  const itemFootprint = (item) => (item.rot === 90 ? { w: item.h, h: item.w } : { w: item.w, h: item.h });
+  const itemFootprint = (item) => (item.rot % 180 === 90 ? { w: item.h, h: item.w } : { w: item.w, h: item.h });
   const snapCm = (value, step = 5) => Math.round(value / step) * step;
 
   function itemsOverlap(a, b) {
@@ -384,7 +384,7 @@
     el.dataset.id = item.id;
     el.tabIndex = 0;
     el.setAttribute('role', 'button');
-    el.setAttribute('aria-label', `${item.label}，位置 X ${item.x} Y ${item.y} 公分，可拖曳或用方向鍵移動`);
+    el.setAttribute('aria-label', `${item.label}，朝向 ${item.rot} 度，位置 X ${item.x} Y ${item.y} 公分，可拖曳或用方向鍵移動，按 R 旋轉`);
 
     const icon = document.createElement('div');
     icon.className = 'piece-icon icon-fill';
@@ -643,6 +643,7 @@
     stage.style.height = height + 'px';
     stage.setAttribute('aria-busy', String(!preview3D && !previewError));
     if (!preview3D || previewError) {
+      preview3D?.setVisible(false);
       const message = document.createElement('p');
       message.className = 'preview-message';
       message.textContent = previewError || '正在載入 Three.js 3D 預覽…';
@@ -670,10 +671,16 @@
       }
       return;
     }
-    const caption = buildDimLabel(`${state.room.width} × ${state.room.depth} cm · 高 ${state.room.height} cm`, {
-      left: '50%', bottom: '0', transform: 'translateX(-50%)', pointerEvents: 'none',
-    });
-    stage.replaceChildren(preview3D.canvas, caption);
+    if (preview3D.canvas.parentNode !== stage) stage.replaceChildren(preview3D.canvas);
+    let caption = stage.querySelector('.preview-caption');
+    if (!caption) {
+      caption = buildDimLabel('', {
+        left: '50%', bottom: '0', transform: 'translateX(-50%)', pointerEvents: 'none',
+      });
+      caption.classList.add('preview-caption');
+      stage.append(caption);
+    }
+    caption.textContent = `${state.room.width} × ${state.room.depth} cm · 高 ${state.room.height} cm`;
     preview3D.resize(width, height);
     preview3D.update(state, {
       bounds: layoutBounds(), doorPlan: doorPlan(), wallColor: WALLPAPER_MAP[state.wallpaper].color, zoom,
@@ -687,8 +694,10 @@
     finishPanDrag();
     const focusedId = document.activeElement?.closest('[data-id]')?.dataset.id;
     const stage = document.getElementById('room-stage');
-    preview3D?.setVisible(false);
-    stage.replaceChildren();
+    if (viewMode !== '3d') {
+      preview3D?.setVisible(false);
+      stage.replaceChildren();
+    }
     stage.style.translate = viewMode === '2d' ? `${panX2D}px ${panY2D}px` : 'none';
     stage.setAttribute('aria-busy', 'false');
     stage.classList.toggle('is-3d', viewMode === '3d');
@@ -745,10 +754,12 @@
     renderInspector();
   }
 
-  function rotateItem(id) {
+  function rotateItem(id, angle) {
     const item = state.items.find((i) => i.id === id);
     if (!item) return;
-    item.rot = item.rot === 90 ? 0 : 90;
+    const next = angle ?? (item.rot + 90) % 360;
+    if (![0, 90, 180, 270].includes(next)) return;
+    item.rot = next;
     setItemPosition(item, item.x, item.y);
     renderRoom();
     renderInspector();
@@ -784,7 +795,7 @@
     const roomSection = document.getElementById('room-settings-section');
     const itemSection = document.getElementById('item-inspector-section');
     renderFurnitureLayers();
-    ['input-item-x', 'input-item-y', 'btn-rotate-item'].forEach((id) => {
+    ['input-item-x', 'input-item-y'].forEach((id) => {
       document.getElementById(id).disabled = viewMode === '3d';
     });
     updatePlacementFeedback();
@@ -803,6 +814,7 @@
     document.getElementById('input-item-width').value = item.w;
     document.getElementById('input-item-depth').value = item.h;
     document.getElementById('input-item-height').value = item.height;
+    document.getElementById('input-item-rotation').value = item.rot;
     const xInput = document.getElementById('input-item-x');
     const yInput = document.getElementById('input-item-y');
     xInput.value = item.x;
@@ -1147,6 +1159,9 @@
     });
     document.getElementById('btn-rotate-item').addEventListener('click', () => {
       if (state.selectedId) rotateItem(state.selectedId);
+    });
+    document.getElementById('input-item-rotation').addEventListener('change', (event) => {
+      if (state.selectedId) rotateItem(state.selectedId, Number(event.target.value));
     });
     document.getElementById('btn-delete-item').addEventListener('click', () => {
       if (state.selectedId) deleteItem(state.selectedId);

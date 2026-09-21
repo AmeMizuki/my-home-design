@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export function createFurnitureBuilder() {
   const geometries = {
@@ -16,6 +17,7 @@ export function createFurnitureBuilder() {
 
   const textures = [];
   const materials = {};
+  const models = new Map();
   let disposed = false;
   // Each small tile is shared by every face and instance of its material.
   for (const [name, color, roughness, metalness] of [
@@ -66,19 +68,23 @@ export function createFurnitureBuilder() {
 
   function build(item) {
     if (disposed) throw new Error('Furniture builder has been disposed.');
-    const root = new THREE.Group();
+    if (!models.has(item.type)) models.set(item.type, buildModel(item.type));
+    const root = models.get(item.type).clone();
     root.name = item.label || item.type;
     root.userData.itemId = item.id;
     root.scale.set(item.w, item.height, item.h);
-    // The original chair's outer armrests and seat leave unused margins.
-    // Normalize those margins, not the user's footprint or world placement.
-    const centerDepth = item.type === 'chair' ? .4925 : .5;
+    // Normalize the chair's unused margins, not the measured footprint.
     if (item.type === 'chair') root.scale.set(item.w / .9, item.height, item.h / .895);
+    return root;
+  }
+
+  function buildModel(type) {
+    const root = new THREE.Group();
+    const centerDepth = type === 'chair' ? .4925 : .5;
 
     function mesh(kind, material, parent = root) {
       const part = new THREE.Mesh(geometries[kind], materials[material]);
-      part.name = `${item.type}-${material}`;
-      part.userData.itemId = item.id;
+      part.name = `${type}-${material}`;
       part.castShadow = part.receiveShadow = true;
       parent.add(part);
       return part;
@@ -108,7 +114,7 @@ export function createFurnitureBuilder() {
       return part;
     }
 
-    switch (item.type) {
+    switch (type) {
       case 'bed':
         for (const x of [.05, .87]) for (const d of [.08, .88]) box(x, d, 0, .08, .07, .16, 'oak');
         box(0, .04, .12, 1, .96, .24, 'oak');
@@ -131,7 +137,7 @@ export function createFurnitureBuilder() {
         for (const x of [0, .955]) box(x, 0, .06, .045, .96, .94, 'oak');
         box(0, 0, .965, 1, .97, .035, 'oak');
         box(0, 0, .06, 1, .97, .035, 'oak');
-        if (item.type === 'wardrobe') {
+        if (type === 'wardrobe') {
           for (const x of [.05, .5075]) box(x, .93, .095, .4425, .045, .855, 'oak');
           for (const x of [.455, .525]) box(x, .975, .46, .018, .025, .13, 'metal');
         } else {
@@ -193,7 +199,26 @@ export function createFurnitureBuilder() {
         break;
       }
       default:
-        throw new Error(`Unknown furniture type: ${item.type}`);
+        throw new Error(`Unknown furniture type: ${type}`);
+    }
+    // Bake static parts once per furniture type: one draw per material, shared by all copies.
+    root.updateMatrixWorld(true);
+    const batches = new Map();
+    root.traverse((part) => {
+      if (!part.isMesh) return;
+      if (!batches.has(part.material)) batches.set(part.material, []);
+      batches.get(part.material).push(part.geometry.clone().applyMatrix4(part.matrixWorld));
+    });
+    root.clear();
+    for (const [material, parts] of batches) {
+      const geometry = mergeGeometries(parts);
+      for (const part of parts) part.dispose();
+      if (!geometry) throw new Error(`Cannot merge furniture geometry: ${type}`);
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+      const part = new THREE.Mesh(geometry, material);
+      part.castShadow = part.receiveShadow = true;
+      root.add(part);
     }
     return root;
   }
@@ -201,6 +226,10 @@ export function createFurnitureBuilder() {
   function dispose() {
     if (disposed) return;
     disposed = true;
+    for (const model of models.values()) {
+      for (const part of model.children) part.geometry.dispose();
+    }
+    models.clear();
     for (const geometry of Object.values(geometries)) geometry.dispose();
     for (const material of Object.values(materials)) material.dispose();
     for (const texture of textures) texture.dispose();
