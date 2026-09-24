@@ -138,8 +138,14 @@ export function createFurnitureBuilder() {
         box(0, 0, .965, 1, .97, .035, 'oak');
         box(0, 0, .06, 1, .97, .035, 'oak');
         if (type === 'wardrobe') {
-          for (const x of [.05, .5075]) box(x, .93, .095, .4425, .045, .855, 'oak');
-          for (const x of [.455, .525]) box(x, .975, .46, .018, .025, .13, 'metal');
+          // Two full-width drawers below a shelf, double doors over the hanging space.
+          for (const y of [.095, .212]) {
+            box(.05, .93, y, .9, .045, .112, 'oak');
+            box(.40, .975, y + .048, .20, .025, .016, 'metal');
+          }
+          box(.045, .05, .322, .91, .88, .012, 'oak');
+          for (const x of [.05, .5075]) box(x, .93, .329, .4425, .045, .621, 'oak');
+          for (const x of [.455, .525]) box(x, .975, .58, .018, .025, .13, 'metal');
         } else {
           for (let i = 0; i < 5; i++) {
             const y = .095 + i * .172;

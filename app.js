@@ -159,6 +159,7 @@
   let justAddedId = null;
   let viewMode = '2d';
   let cameraMode = 'orbit';
+  let statusFadeTimer = null;
   let snapDragToGrid = true;
   let panX2D = 0;
   let panY2D = 0;
@@ -170,13 +171,6 @@
   let previewError = '';
 
   const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
-  const debounce = (fn, ms) => {
-    let t;
-    return (...args) => {
-      clearTimeout(t);
-      t = setTimeout(() => fn(...args), ms);
-    };
-  };
   const wallIsHorizontal = (wall) => wall === 'top' || wall === 'bottom';
   const wallLength = (wall) => (wallIsHorizontal(wall) ? state.room.width : state.room.depth);
   const itemFootprint = (item) => (item.rot % 180 === 90 ? { w: item.h, h: item.w } : { w: item.w, h: item.h });
@@ -636,11 +630,58 @@
     });
   }
 
+  // One shared fixed-position tooltip, so side-panel overflow never clips it.
+  // Text comes from data-tip, else the aria-describedby target, else aria-label.
+  function wireTooltips() {
+    const tip = document.createElement('div');
+    tip.id = 'app-tooltip';
+    tip.setAttribute('role', 'tooltip');
+    document.body.append(tip);
+    let anchor = null;
+    let timer = null;
+    function show(el) {
+      const text = el.dataset.tip
+        || document.getElementById(el.getAttribute('aria-describedby'))?.textContent.trim()
+        || el.getAttribute('aria-label');
+      if (!text) return;
+      anchor = el;
+      tip.textContent = text;
+      const r = el.getBoundingClientRect();
+      const t = tip.getBoundingClientRect();
+      const top = r.top - t.height - 6 >= 8 ? r.top - t.height - 6 : r.bottom + 6;
+      tip.style.left = clamp(r.left + r.width / 2 - t.width / 2, 8, innerWidth - t.width - 8) + 'px';
+      tip.style.top = top + 'px';
+      tip.classList.add('is-shown');
+    }
+    function hide() {
+      clearTimeout(timer);
+      anchor = null;
+      tip.classList.remove('is-shown');
+    }
+    document.addEventListener('pointerover', (event) => {
+      const el = event.target.closest?.('[data-tip]');
+      if (el === anchor) return;
+      clearTimeout(timer);
+      if (!el) return hide();
+      // Delay the first tooltip so sweeping across the toolbar stays quiet; switch instantly after.
+      if (anchor) show(el);
+      else timer = setTimeout(() => show(el), 350);
+    });
+    document.addEventListener('focusin', (event) => {
+      const el = event.target.closest('[data-tip]');
+      if (!el) hide();
+      else if (el.matches(':focus-visible')) show(el);
+    });
+    document.addEventListener('keydown', (event) => { if (event.key === 'Escape') hide(); });
+    document.addEventListener('scroll', hide, true);
+  }
+
   function render3DRoom() {
     const stage = document.getElementById('room-stage');
     const canvas = document.getElementById('canvas-wrap');
-    const width = Math.max(120, canvas.clientWidth - 32);
-    const height = Math.max(180, canvas.clientHeight - 116);
+    // Fill the whole viewport like a map; the toolbar and labels float over the scene.
+    const width = Math.max(120, canvas.clientWidth);
+    const height = Math.max(180, canvas.clientHeight);
     stage.style.width = width + 'px';
     stage.style.height = height + 'px';
     stage.setAttribute('aria-busy', String(!preview3D && !previewError));
@@ -678,7 +719,7 @@
     let caption = stage.querySelector('.preview-caption');
     if (!caption) {
       caption = buildDimLabel('', {
-        left: '50%', bottom: '0', transform: 'translateX(-50%)', pointerEvents: 'none',
+        left: '16px', bottom: '22px', pointerEvents: 'none',
       });
       caption.classList.add('preview-caption');
       stage.append(caption);
@@ -716,7 +757,7 @@
     document.getElementById('btn-view-2d').setAttribute('aria-pressed', String(viewMode === '2d'));
     document.getElementById('btn-view-3d').setAttribute('aria-pressed', String(viewMode === '3d'));
     document.getElementById('btn-snap-grid').setAttribute('aria-pressed', String(snapDragToGrid));
-    document.getElementById('btn-snap-grid').disabled = viewMode === '3d';
+    document.getElementById('btn-snap-grid').hidden = viewMode === '3d';
     const cameraSelect = document.getElementById('camera-mode');
     cameraSelect.hidden = viewMode !== '3d';
     for (const type of ['bed', 'chair']) {
@@ -727,14 +768,21 @@
     cameraSelect.value = cameraMode;
     const reset = document.getElementById('btn-zoom-reset');
     reset.setAttribute('aria-label', '重設視角、平移與縮放');
-    reset.title = '重設視角、平移與縮放';
-    document.getElementById('room-view-status').textContent = viewMode === '2d'
+    const statusText = viewMode === '2d'
       ? '2D 依公分等比繪製。滾輪縮放，按住滾輪拖曳平移；Alt＋方向鍵平移，Home 還原。'
       : previewError || (cameraMode === 'walk'
         ? '170 cm 視線高度。拖曳環顧四周；W/S 或 ↑/↓ 前後走、A/D 側移、←/→ 轉頭（Shift 加速）；Home 回到房間中央。'
         : cameraMode !== 'orbit'
           ? '拖曳或方向鍵環顧四周，Home 回正；選取另一張床／椅子可換位置。'
           : '左鍵／單指拖曳旋轉，滾輪縮放，按住滾輪拖曳平移。方向鍵旋轉、Alt＋方向鍵平移、Home 還原；家具清單也可鍵盤選取。');
+    const status = document.getElementById('room-view-status');
+    if (status.textContent !== statusText) {
+      // Show new hints briefly, then fade; errors stay until resolved.
+      status.textContent = statusText;
+      status.classList.remove('is-faded');
+      clearTimeout(statusFadeTimer);
+      if (!previewError) statusFadeTimer = setTimeout(() => status.classList.add('is-faded'), 5000);
+    }
     if (focusedId) {
       const focused = [...document.querySelectorAll('#room-stage [data-id]')].find((el) => el.dataset.id === focusedId);
       (focused || document.getElementById(`btn-view-${viewMode}`)).focus({ preventScroll: true });
@@ -1086,6 +1134,7 @@
 
   function wireEvents() {
     wireViewportControls();
+    wireTooltips();
     document.querySelectorAll('#panel-left, #panel-right').forEach((panel) => {
       panel.addEventListener('keydown', (event) => {
         // Keep native control keys out of Preline's global dialog shortcuts.
@@ -1251,7 +1300,26 @@
       try { window.print(); } finally { restorePrint(); }
     });
 
-    window.addEventListener('resize', debounce(renderRoom, 100));
+    for (const side of ['left', 'right']) {
+      const panel = document.getElementById(`panel-${side}`);
+      const button = document.getElementById(`btn-collapse-${side}`);
+      const name = side === 'left' ? '編輯工具面板' : '屬性面板';
+      button.addEventListener('click', () => {
+        const collapsed = panel.classList.toggle('is-collapsed');
+        button.setAttribute('aria-expanded', String(!collapsed));
+        button.setAttribute('aria-label', (collapsed ? '展開' : '收合') + name);
+      });
+    }
+
+    // Follows window resizes and panel collapse animations frame by frame.
+    let resizeFrame = null;
+    new ResizeObserver(() => {
+      if (resizeFrame !== null) return;
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        renderRoom();
+      });
+    }).observe(document.getElementById('canvas-wrap'));
   }
 
   function init() {
