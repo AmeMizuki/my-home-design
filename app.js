@@ -158,6 +158,7 @@
   let zoom = 1;
   let justAddedId = null;
   let viewMode = '2d';
+  let cameraMode = 'orbit';
   let snapDragToGrid = true;
   let panX2D = 0;
   let panY2D = 0;
@@ -607,7 +608,8 @@
       });
     }, { passive: false });
     stage.addEventListener('keydown', (event) => {
-      if (event.target !== stage) return;
+      // Clicking the 3D view focuses its canvas (tabIndex -1), so accept keys from it too.
+      if (event.target !== stage && event.target !== preview3D?.canvas) return;
       if (event.key === '+' || event.key === '=' || event.key === '-') {
         event.preventDefault();
         setViewZoom(+(zoom + (event.key === '-' ? -0.1 : 0.1)).toFixed(2));
@@ -664,7 +666,8 @@
           });
           if (viewMode === '3d') renderRoom();
           else preview3D.setVisible(false);
-        }).catch(() => {
+        }).catch((error) => {
+          console.error(error);
           previewError = '無法啟動 3D 預覽。請確認網路連線與瀏覽器 WebGL 2 支援後重新整理；仍可使用 2D 編輯。';
           if (viewMode === '3d') renderRoom();
         }).finally(() => { previewLoad = null; });
@@ -683,7 +686,7 @@
     caption.textContent = `${state.room.width} × ${state.room.depth} cm · 高 ${state.room.height} cm`;
     preview3D.resize(width, height);
     preview3D.update(state, {
-      bounds: layoutBounds(), doorPlan: doorPlan(), wallColor: WALLPAPER_MAP[state.wallpaper].color, zoom,
+      bounds: layoutBounds(), doorPlan: doorPlan(), wallColor: WALLPAPER_MAP[state.wallpaper].color, zoom, cameraMode,
       overlappingIds: state.items.filter((a) => state.items.some((b) => itemsOverlap(a, b))).map((item) => item.id),
       outsideIds: state.items.filter(itemOutsideRoom).map((item) => item.id),
     });
@@ -714,12 +717,24 @@
     document.getElementById('btn-view-3d').setAttribute('aria-pressed', String(viewMode === '3d'));
     document.getElementById('btn-snap-grid').setAttribute('aria-pressed', String(snapDragToGrid));
     document.getElementById('btn-snap-grid').disabled = viewMode === '3d';
+    const cameraSelect = document.getElementById('camera-mode');
+    cameraSelect.hidden = viewMode !== '3d';
+    for (const type of ['bed', 'chair']) {
+      const missing = !state.items.some((item) => item.type === type);
+      cameraSelect.querySelector(`option[value="${type}"]`).disabled = missing;
+      if (missing && cameraMode === type) cameraMode = 'orbit';
+    }
+    cameraSelect.value = cameraMode;
     const reset = document.getElementById('btn-zoom-reset');
     reset.setAttribute('aria-label', '重設視角、平移與縮放');
     reset.title = '重設視角、平移與縮放';
     document.getElementById('room-view-status').textContent = viewMode === '2d'
       ? '2D 依公分等比繪製。滾輪縮放，按住滾輪拖曳平移；Alt＋方向鍵平移，Home 還原。'
-      : previewError || '左鍵／單指拖曳旋轉，滾輪縮放，按住滾輪拖曳平移。方向鍵旋轉、Alt＋方向鍵平移、Home 還原；家具清單也可鍵盤選取。';
+      : previewError || (cameraMode === 'walk'
+        ? '170 cm 視線高度。拖曳環顧四周；W/S 或 ↑/↓ 前後走、A/D 側移、←/→ 轉頭（Shift 加速）；Home 回到房間中央。'
+        : cameraMode !== 'orbit'
+          ? '拖曳或方向鍵環顧四周，Home 回正；選取另一張床／椅子可換位置。'
+          : '左鍵／單指拖曳旋轉，滾輪縮放，按住滾輪拖曳平移。方向鍵旋轉、Alt＋方向鍵平移、Home 還原；家具清單也可鍵盤選取。');
     if (focusedId) {
       const focused = [...document.querySelectorAll('#room-stage [data-id]')].find((el) => el.dataset.id === focusedId);
       (focused || document.getElementById(`btn-view-${viewMode}`)).focus({ preventScroll: true });
@@ -1087,6 +1102,12 @@
         renderRoom();
         renderInspector();
       });
+    });
+    document.getElementById('camera-mode').addEventListener('change', (event) => {
+      cameraMode = event.target.value;
+      renderRoom();
+      // Hand keys to the stage so WASD/arrows move the view instead of changing this select.
+      document.getElementById('room-stage').focus({ preventScroll: true });
     });
     document.getElementById('btn-snap-grid').addEventListener('click', () => {
       snapDragToGrid = !snapDragToGrid;

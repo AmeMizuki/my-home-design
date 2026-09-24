@@ -177,6 +177,12 @@
 
       <p id="room-view-status" role="status" aria-live="polite"></p>
       <div id="view-toolbar" class="flex items-center gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1 shadow-md">
+        <select id="camera-mode" aria-label="3D 視角" class="rounded-md bg-[var(--color-surface)] text-[var(--color-foreground)] px-1.5 py-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">
+          <option value="orbit">俯視</option>
+          <option value="walk">站立巡視（170 cm）</option>
+          <option value="bed">躺在床上</option>
+          <option value="chair">坐在電腦椅</option>
+        </select>
         <button type="button" id="btn-snap-grid" aria-pressed="true" class="view-toggle-btn rounded-md px-2 py-1.5 text-xs text-[var(--color-muted)] aria-pressed:bg-[var(--color-primary)] aria-pressed:text-[var(--color-primary-foreground)]">拖曳吸附 5 cm</button>
         <button type="button" id="btn-zoom-out" class="size-7 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" aria-label="縮小">
           <i class="ph ph-minus text-sm"></i>

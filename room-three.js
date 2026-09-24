@@ -9,6 +9,17 @@ const FLOOR_COLORS = {
   oak: '#d9bd97', walnut: '#6b4a34', herringbone: '#cbb08a',
   tile: '#c7c9cc', concrete: '#b7b8b6', carpet: '#d6d3ce',
 };
+const ORBIT_FOV = 42;
+const PERSON_FOV = 65;
+// A 170 cm person: standing eyes ~158 cm, seated eyes ~79 cm above the seat.
+const STAND_EYE = 158;
+const SEATED_EYE = 79;
+const WALL_MARGIN = 20;
+const WALK_SPEED = 120; // cm/s, a relaxed indoor pace
+const RUN_SPEED = 250;
+const TURN_SPEED = 90; // degrees/s
+const LOOK_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'];
+const WALK_KEYS = [...LOOK_KEYS, 'w', 'a', 's', 'd'];
 
 export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   // Creation errors deliberately reach the caller; there is no simulated 3D fallback.
@@ -33,7 +44,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   let environmentMap;
   scene.environmentIntensity = 0.3;
   updateEnvironment();
-  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 20000);
+  const camera = new THREE.PerspectiveCamera(ORBIT_FOV, 1, 0.1, 20000);
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = false;
   controls.autoRotate = false;
@@ -74,6 +85,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   const selectionMaterial = new THREE.LineBasicMaterial({ color: tokens.getPropertyValue('--color-primary').trim() || '#2563eb', depthTest: false });
   const overlapMaterial = new THREE.LineDashedMaterial({ color: tokens.getPropertyValue('--color-muted').trim() || '#71717a', dashSize: 6, gapSize: 3, depthTest: false });
   const outsideMaterial = new THREE.LineDashedMaterial({ color: tokens.getPropertyValue('--color-danger').trim() || '#dc2626', dashSize: 2, gapSize: 3, depthTest: false });
+  const ceilingMaterial = material('ceiling', '#f4f2ee');
   const wallGroups = new Map();
   const furnitureModels = new Map();
   let architectureKey = '';
@@ -99,6 +111,14 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   let bounds = null;
   let pixelRatio = 0;
   let wallThickness = 0;
+  let lastState = null;
+  // First-person camera: { mode, itemId, key }; orbitSaved restores the overview on exit.
+  let person = null;
+  let orbitSaved = null;
+  const held = new Set();
+  let running = false;
+  let moveFrame = null;
+  let lastTick = 0;
 
   function updateEnvironment() {
     environmentMap?.dispose();
@@ -239,6 +259,13 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     floor.receiveShadow = true;
     floor.name = 'Floor';
     architecture.add(floor);
+    const ceiling = new THREE.Mesh(plane, ceilingMaterial);
+    ceiling.rotation.x = Math.PI / 2;
+    ceiling.scale.set(room.width, room.depth, 1);
+    ceiling.position.set(room.width / 2, room.height, room.depth / 2);
+    ceiling.name = 'Ceiling';
+    ceiling.visible = !!person;
+    architecture.add(ceiling);
     // Keep the slab below the floor plane so their coplanar triangles cannot z-fight.
     box(architecture, 'Floor foundation', room.width / 2, -2.05, room.depth / 2, room.width + t * 2, 4, room.depth + t * 2, edgeMaterial);
     const windowHeight = Math.min(100, room.height);
@@ -342,8 +369,10 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   function cutaway() {
     direction.subVectors(camera.position, controls.target);
     const facing = { top: -direction.z, bottom: direction.z, left: -direction.x, right: direction.x };
+    const ceiling = architecture.getObjectByName('Ceiling');
+    if (ceiling) ceiling.visible = !!person;
     for (const [side, group] of wallGroups) {
-      const next = facing[side] <= 0;
+      const next = !!person || facing[side] <= 0;
       if (group.visible !== next) {
         group.visible = next;
         renderer.shadowMap.needsUpdate = true;
@@ -367,6 +396,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
 
   function controlChanged() {
     if (changingCamera || disposed) return;
+    if (person) return requestRender();
     const next = clamp(fitDistance / camera.position.distanceTo(controls.target), 0.25, 4);
     if (Math.abs(next - currentZoom) > 0.00001) {
       currentZoom = next;
@@ -391,13 +421,109 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   function fit() {
     if (!bounds) return;
     const radius = Math.hypot(bounds.width + wallThickness * 2, bounds.depth + wallThickness * 2, bounds.height + 4) / 2;
-    const vertical = radians(camera.fov) / 2;
+    const vertical = radians(ORBIT_FOV) / 2;
     const horizontal = Math.atan(Math.tan(vertical) * camera.aspect);
     fitDistance = radius / Math.sin(Math.min(vertical, horizontal)) * 1.08;
     camera.near = Math.max(0.1, radius / 5000);
     camera.far = Math.max(20000, fitDistance * 20);
+    camera.fov = person ? clamp(PERSON_FOV / currentZoom, 10, 110) : ORBIT_FOV;
     camera.updateProjectionMatrix();
-    placeCamera();
+    if (person) requestRender();
+    else placeCamera();
+  }
+
+  function lookFrom(eye, look) {
+    changingCamera = true;
+    camera.position.copy(eye);
+    controls.target.copy(eye).add(look.normalize());
+    controls.update();
+    changingCamera = false;
+  }
+
+  function personItem(mode, state) {
+    const selected = state.items.find((item) => item.id === state.selectedId && item.type === mode);
+    return selected || state.items.find((item) => item.id === person?.itemId && item.type === mode)
+      || state.items.find((item) => item.type === mode);
+  }
+
+  // Item-local vector (cm, origin at footprint center, model depth along +z) to world space.
+  function fromItem(item, vector, isPoint) {
+    vector.applyAxisAngle(THREE.Object3D.DEFAULT_UP, -radians(item.rot));
+    if (!isPoint) return vector;
+    const w = item.rot % 180 === 90 ? item.h : item.w;
+    const d = item.rot % 180 === 90 ? item.w : item.h;
+    return vector.add(new THREE.Vector3(item.x + w / 2, 0, item.y + d / 2));
+  }
+
+  // Stand in the room's center, facing away from the door wall.
+  function standingStart(state) {
+    const { room, door } = state;
+    const [dx, dz] = { top: [0, 1], bottom: [0, -1], left: [1, 0], right: [-1, 0] }[door.wall];
+    return [new THREE.Vector3(room.width / 2, STAND_EYE, room.depth / 2), new THREE.Vector3(dx, -0.12, dz)];
+  }
+
+  function applyCameraMode(mode, state) {
+    const item = mode === 'bed' || mode === 'chair' ? personItem(mode, state) : null;
+    if (mode === 'orbit' || (mode !== 'walk' && !item)) {
+      if (!person) return;
+      person = null;
+      stopMoving();
+      controls.enableZoom = controls.enablePan = true;
+      controls.rotateSpeed = 1;
+      controls.minPolarAngle = radians(5);
+      controls.maxPolarAngle = radians(85);
+      camera.position.copy(orbitSaved.position);
+      controls.target.copy(orbitSaved.target);
+      currentZoom = orbitSaved.zoom;
+      renderer.shadowMap.needsUpdate = true;
+      fit();
+      onZoom?.(currentZoom);
+      return;
+    }
+    const key = JSON.stringify(item ? [mode, item.id, item.x, item.y, item.rot, item.w, item.h, item.height] : [mode]);
+    if (person?.key === key) {
+      if (mode === 'walk') walk(0, 0, state.room);
+      return;
+    }
+    if (!person) {
+      orbitSaved = { position: camera.position.clone(), target: controls.target.clone(), zoom: currentZoom };
+      controls.enableZoom = controls.enablePan = false;
+      controls.minDistance = 0;
+      controls.rotateSpeed = 0.4;
+      controls.minPolarAngle = radians(1);
+      controls.maxPolarAngle = radians(179);
+      renderer.shadowMap.needsUpdate = true;
+    }
+    person = { mode, itemId: item?.id, key };
+    currentZoom = 1;
+    onZoom?.(1);
+    let eye, look;
+    if (mode === 'walk') [eye, look] = standingStart(state);
+    else if (mode === 'bed') {
+      // Head on the pillow (model depth .11-.27, top at .82 of height), gazing up toward the foot.
+      eye = fromItem(item, new THREE.Vector3(0, item.height * 0.82 + 8, item.h * -0.31), true);
+      look = fromItem(item, new THREE.Vector3(0, 1, 0.4), false);
+    } else {
+      // Seat top is at .515 of the chair height; the backrest sits toward -z.
+      eye = fromItem(item, new THREE.Vector3(0, item.height * 0.515 + SEATED_EYE, 0), true);
+      look = fromItem(item, new THREE.Vector3(0, -0.3, 1), false);
+    }
+    lookFrom(eye, look);
+    fit();
+  }
+
+  // ponytail: walls clamp the walker, furniture does not; add collision boxes if walking through beds bothers.
+  function walk(forward, sideways, room) {
+    direction.subVectors(controls.target, camera.position).setY(0).normalize();
+    pan.set(-direction.z, 0, direction.x).multiplyScalar(sideways).addScaledVector(direction, forward);
+    pan.add(camera.position);
+    pan.x = clamp(pan.x, WALL_MARGIN, room.width - WALL_MARGIN);
+    pan.z = clamp(pan.z, WALL_MARGIN, room.depth - WALL_MARGIN);
+    pan.sub(camera.position);
+    camera.position.add(pan);
+    controls.target.add(pan);
+    controls.update();
+    requestRender();
   }
 
   function update(state, options) {
@@ -408,13 +534,17 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
       || wallThickness !== state.room.wallThickness) renderer.shadowMap.needsUpdate = true;
     bounds = { ...options.bounds };
     wallThickness = state.room.wallThickness;
+    lastState = state;
     currentZoom = clamp(options.zoom ?? currentZoom, 0.25, 4);
-    pan.copy(controls.target).sub(center);
+    // While first-person, keep the saved overview camera following room changes instead.
+    const orbitTarget = person ? orbitSaved.target : controls.target;
+    const orbitPosition = person ? orbitSaved.position : camera.position;
+    pan.copy(orbitTarget).sub(center);
     center.set(bounds.minX + bounds.width / 2, bounds.height / 2, bounds.minY + bounds.depth / 2);
-    offset.subVectors(camera.position, controls.target);
-    controls.target.copy(center).add(pan);
+    offset.subVectors(orbitPosition, orbitTarget);
+    orbitTarget.copy(center).add(pan);
     if (!initialized) offset.setFromSphericalCoords(1, radians(58), radians(-32));
-    camera.position.copy(controls.target).add(offset);
+    orbitPosition.copy(orbitTarget).add(offset);
     initialized = true;
     const radius = Math.hypot(bounds.width, bounds.depth, bounds.height) / 2 + wallThickness;
     light.target.position.copy(center);
@@ -426,6 +556,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     shadow.far = radius * 6;
     shadow.updateProjectionMatrix();
     fit();
+    applyCameraMode(options.cameraMode || 'orbit', state);
   }
 
   function resize(nextWidth, nextHeight) {
@@ -446,18 +577,70 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   function setZoom(zoom) {
     if (disposed) return;
     currentZoom = clamp(zoom, 0.25, 4);
-    placeCamera();
+    if (person) fit();
+    else placeCamera();
     onZoom?.(currentZoom);
   }
 
   function resetView(zoom = 1) {
     if (disposed) return;
+    if (person) {
+      person.key = '';
+      applyCameraMode(person.mode, lastState);
+      return;
+    }
     currentZoom = clamp(zoom, 0.25, 4);
     controls.target.copy(center);
     offset.setFromSphericalCoords(fitDistance / currentZoom, radians(58), radians(-32));
     camera.position.copy(center).add(offset);
     placeCamera();
     onZoom?.(currentZoom);
+  }
+
+  function keyName(event) {
+    return event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  }
+
+  function keyUp(event) {
+    running = event.shiftKey;
+    held.delete(keyName(event));
+  }
+
+  function stopMoving() {
+    held.clear();
+    if (moveFrame !== null) cancelAnimationFrame(moveFrame);
+    moveFrame = null;
+    lastTick = 0;
+  }
+
+  // Held keys move/turn continuously per frame instead of stepping on keyboard auto-repeat.
+  function tick(now) {
+    moveFrame = null;
+    if (!person || !held.size || !visible || contextLost || disposed) {
+      lastTick = 0;
+      return;
+    }
+    const dt = lastTick ? Math.min((now - lastTick) / 1000, 0.1) : 1 / 60;
+    lastTick = now;
+    const has = (...keys) => keys.some((key) => held.has(key));
+    const yaw = has('ArrowLeft') - has('ArrowRight');
+    const pitch = person.mode === 'walk' ? 0 : has('ArrowUp') - has('ArrowDown');
+    if (yaw || pitch) {
+      spherical.setFromVector3(offset.subVectors(controls.target, camera.position));
+      spherical.theta += yaw * radians(TURN_SPEED) * dt;
+      spherical.phi = clamp(spherical.phi - pitch * radians(TURN_SPEED) * dt, controls.minPolarAngle, controls.maxPolarAngle);
+      controls.target.copy(camera.position).add(offset.setFromSpherical(spherical));
+      controls.update();
+    }
+    if (person.mode === 'walk') {
+      const forward = has('w', 'ArrowUp') - has('s', 'ArrowDown');
+      const sideways = has('d') - has('a');
+      const length = Math.hypot(forward, sideways);
+      const distance = (running ? RUN_SPEED : WALK_SPEED) * dt / (length || 1);
+      if (length) walk(forward * distance, sideways * distance, lastState.room);
+    }
+    requestRender();
+    moveFrame = requestAnimationFrame(tick);
   }
 
   // Main owns the stage's key listener; OrbitControls never installs its arrow-key handler.
@@ -468,8 +651,18 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
       resetView(currentZoom);
       return true;
     }
+    if (person && !event.altKey) {
+      const key = keyName(event);
+      running = event.shiftKey;
+      if (!(person.mode === 'walk' ? WALK_KEYS : LOOK_KEYS).includes(key)) return false;
+      event.preventDefault();
+      held.add(key);
+      if (moveFrame === null) moveFrame = requestAnimationFrame(tick);
+      return true;
+    }
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return false;
     event.preventDefault();
+    if (person && event.altKey) return true;
     if (event.altKey) {
       camera.updateMatrixWorld();
       const distance = camera.position.distanceTo(controls.target);
@@ -545,6 +738,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     else {
       controls.disconnect();
       cancelPointers();
+      stopMoving();
       cancelFrame();
     }
     requestRender();
@@ -555,6 +749,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     contextLost = true;
     controls.enabled = false;
     cancelPointers();
+    stopMoving();
     cancelFrame();
     onError?.('3D 顯示連線已中斷，正在等待 WebGL 恢復。仍可使用 2D 編輯。');
   }
@@ -588,6 +783,9 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     document.removeEventListener('pointerup', pointerUp, true);
     document.removeEventListener('pointercancel', cancelPointers, true);
     window.removeEventListener('blur', cancelPointers);
+    window.removeEventListener('blur', stopMoving);
+    window.removeEventListener('keyup', keyUp);
+    stopMoving();
     window.removeEventListener('resize', windowResize);
     furnitureBuilder.dispose();
     for (const line of markings.children) line.geometry.dispose();
@@ -614,6 +812,8 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   document.addEventListener('pointerup', pointerUp, true);
   document.addEventListener('pointercancel', cancelPointers, true);
   window.addEventListener('blur', cancelPointers);
+  window.addEventListener('blur', stopMoving);
+  window.addEventListener('keyup', keyUp);
   window.addEventListener('resize', windowResize);
 
   return { canvas, update, resize, setVisible, setZoom, resetView, handleKey, dispose };
