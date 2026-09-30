@@ -9,7 +9,7 @@
 <script>
   document.getElementById('planner').addEventListener('load', async (event) => {
     const frame = event.target;
-    const doc = frame.contentDocument;
+    let doc = frame.contentDocument;
     const win = frame.contentWindow;
     const get = (id) => doc.getElementById(id);
     const piece = (id) => doc.querySelector(`#room-stage [data-id="${id}"]`);
@@ -188,6 +188,13 @@
       get('btn-zoom-reset').click();
       const initialView = await framePixels();
       check(initialView.some((value, index) => index % 4 === 3 && value > 0), 'WebGL 畫面未繪製');
+      // Every surface shader must render a distinct finish and survive cache reuse.
+      for (const kind of ['walnut', 'herringbone', 'tile', 'concrete', 'carpet']) {
+        doc.querySelector(`#floor-grid .floor-${kind}`).click();
+        check(frameDifference(initialView, await framePixels()) > 0.001, `${kind} 地板材質未正確渲染`);
+      }
+      doc.querySelector('#floor-grid .floor-oak').click();
+      check(frameDifference(initialView, await framePixels()) < 0.001, '切換材質後橡木地板未正確還原');
       // Cached geometry must still reflect edits, including shadows, without switching views.
       for (const [id, value, kind] of [
         ['input-item-height', 80, 'change'],
@@ -227,6 +234,50 @@
       check(!doc.querySelector('#room-stage canvas'), '列印前未切回 2D');
       win.dispatchEvent(new win.Event('afterprint'));
       check(!!doc.querySelector('#room-stage canvas'), '列印後未還原 3D');
+      // Start ocean checks with a fresh layout, independent of earlier boundary edits.
+      await new Promise((resolve) => {
+        frame.addEventListener('load', resolve, { once: true });
+        win.location.reload();
+      });
+      doc = frame.contentDocument;
+      // The ocean is a window view, not an orbit background; pause freezes its real pixels.
+      get('btn-view-3d').click();
+      await waitForPreview();
+      get('btn-zoom-reset').click();
+      const overview = await framePixels();
+      input('camera-mode', 'walk', 'change');
+      const seaView = await framePixels();
+      let bluePixels = 0;
+      for (let i = 0; i < seaView.length; i += 4) {
+        if (seaView[i + 3] > 0 && seaView[i + 1] > seaView[i] * 1.3
+          && seaView[i + 2] > seaView[i] * 1.5) bluePixels++;
+      }
+      check(bluePixels > seaView.length / 4 * 0.05, '室內窗戶未顯示藍天海景');
+      if (!get('btn-ocean-motion').disabled) {
+        await new Promise((resolve) => win.setTimeout(resolve, 1600));
+        const movingView = await framePixels();
+        check(frameDifference(seaView, movingView) > 0.0001, '海浪未動態拍岸');
+        const canvas = doc.querySelector('#room-stage canvas');
+        let cloudChanges = 0, skySamples = 0;
+        // Middle pane above the horizon: water motion cannot satisfy the wind check.
+        for (let y = Math.floor(canvas.height * .62); y < canvas.height * .75; y++) {
+          for (let x = Math.floor(canvas.width * .43); x < canvas.width * .57; x++) {
+            const i = (y * canvas.width + x) * 4;
+            if ([0, 1, 2].some((channel) => Math.abs(seaView[i + channel] - movingView[i + channel]) > 5)) cloudChanges++;
+            skySamples++;
+          }
+        }
+        check(cloudChanges / skySamples > .002, '雲朵未隨風飄移');
+        get('btn-ocean-motion').click();
+      }
+      get('btn-zoom-reset').click();
+      const pausedSea = await framePixels();
+      await new Promise((resolve) => win.setTimeout(resolve, 300));
+      get('btn-zoom-reset').click();
+      check(frameDifference(pausedSea, await framePixels()) < 0.00001, '暫停或減少動態後海浪仍在變化');
+      input('camera-mode', 'orbit', 'change');
+      check(frameDifference(overview, await framePixels()) < 0.001, '俯視模式出現海景或遺失原視角');
+      get('btn-view-2d').click();
       document.getElementById('result').textContent = 'PASS：門扇角度與投影、滾輪縮放、平移、3D 視角、圖層拖曳、實測尺寸比例、超尺寸提示、旋轉、鍵盤操作、重疊邊界、列印還原';
     } catch (error) {
       document.getElementById('result').textContent = 'FAIL：' + error.message;

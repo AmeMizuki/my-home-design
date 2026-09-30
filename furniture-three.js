@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 export function createFurnitureBuilder() {
   const geometries = {
     box: new THREE.BoxGeometry(1, 1, 1),
+    cushion: new RoundedBoxGeometry(1, 1, 1, 3, 0.08),
     cylinder: new THREE.CylinderGeometry(.5, .5, 1, 32),
     ring: new THREE.TorusGeometry(.495, .005, 6, 64),
   };
@@ -21,45 +23,55 @@ export function createFurnitureBuilder() {
   let disposed = false;
   // Each small tile is shared by every face and instance of its material.
   for (const [name, color, roughness, metalness] of [
-    ['oak', '#c5a57b', .72, 0], ['fabric', '#81968f', .95, 0],
-    ['linen', '#f2ebdc', .96, 0], ['metal', '#91a0a6', .3, .72],
-    ['dark', '#39454a', .64, .12], ['rubber', '#30383b', .96, 0],
-    ['white', '#e4e6df', .48, 0], ['mesh', '#455750', .9, 0],
-    ['cage', '#71848d', .34, .65], ['blade', '#a9c0b8', .46, .08],
+    ['oak', '#ba9870', .46, 0], ['fabric', '#728b7b', .92, 0],
+    ['linen', '#ede4d3', .96, 0], ['metal', '#8c9699', .26, .88],
+    ['dark', '#343d3b', .58, .08], ['rubber', '#303532', .96, 0],
+    ['white', '#e4e2da', .35, 0], ['mesh', '#46574c', .9, 0],
+    ['cage', '#7b878a', .28, .82], ['blade', '#a5bbb0', .4, .05],
   ]) {
     const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = 64;
+    canvas.width = canvas.height = 128;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       dispose();
       throw new Error('無法建立家具材質。');
     }
     ctx.fillStyle = color;
-    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillRect(0, 0, 128, 128);
     if (name === 'oak') {
-      ctx.strokeStyle = 'rgba(109,76,40,.17)';
       ctx.lineWidth = .7;
-      for (let x = 0; x < 64; x += 4) {
+      for (let x = 0; x < 128; x += 3) {
+        ctx.strokeStyle = `rgba(89,57,29,${.08 + .08 * (1 + Math.sin(x * 2.3))})`;
         ctx.beginPath();
         ctx.moveTo(x, 0);
-        ctx.bezierCurveTo(x + 3, 18, x - 3, 46, x, 64);
+        ctx.bezierCurveTo(x + 4, 36, x - 4, 92, x, 128);
         ctx.stroke();
       }
     } else if (['fabric', 'linen', 'mesh', 'rubber'].includes(name)) {
       const step = name === 'mesh' ? 4 : 2;
       ctx.fillStyle = name === 'mesh' ? 'rgba(0,0,0,.35)' : 'rgba(0,0,0,.09)';
-      for (let x = 0; x < 64; x += step) ctx.fillRect(x, 0, .7, 64);
+      for (let x = 0; x < 128; x += step) ctx.fillRect(x, 0, .7, 128);
       ctx.fillStyle = name === 'mesh' ? 'rgba(228,236,228,.3)' : 'rgba(255,255,255,.14)';
-      for (let y = 0; y < 64; y += step) ctx.fillRect(0, y, 64, .7);
+      for (let y = 0; y < 128; y += step) ctx.fillRect(0, y, 128, .7);
     } else {
       ctx.fillStyle = 'rgba(255,255,255,.035)';
-      for (let y = 0; y < 64; y += 2) ctx.fillRect(0, y, 64, 1);
+      for (let y = 0; y < 128; y += 2) ctx.fillRect(0, y, 128, 1);
     }
     const map = new THREE.CanvasTexture(canvas);
     map.colorSpace = THREE.SRGBColorSpace;
     map.wrapS = map.wrapT = THREE.RepeatWrapping;
     textures.push(map);
-    materials[name] = new THREE.MeshStandardMaterial({ map, roughness, metalness });
+    const textile = ['fabric', 'linen', 'mesh'].includes(name);
+    const bumpMap = map.clone();
+    bumpMap.colorSpace = THREE.NoColorSpace;
+    textures.push(bumpMap);
+    materials[name] = new THREE.MeshPhysicalMaterial({
+      map, bumpMap, bumpScale: name === 'oak' ? 0.16 : textile ? 0.08 : 0.015,
+      roughness, metalness, sheen: textile ? 0.55 : 0,
+      sheenColor: new THREE.Color(color), sheenRoughness: .8,
+      clearcoat: name === 'oak' ? .16 : name === 'white' ? .25 : 0,
+      clearcoatRoughness: .4,
+    });
     materials[name].name = name;
   }
 
@@ -91,7 +103,7 @@ export function createFurnitureBuilder() {
     }
     // Preserve the old model fractions: x, ground depth, elevation, w, d, h.
     function box(x, d, y, w, depth, h, material) {
-      const part = mesh('box', material);
+      const part = mesh(['fabric', 'linen'].includes(material) ? 'cushion' : 'box', material);
       part.position.set(x + w / 2 - .5, y + h / 2, d + depth / 2 - centerDepth);
       part.scale.set(w, h, depth);
       return part;

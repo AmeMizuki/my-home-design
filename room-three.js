@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createFurnitureBuilder } from './furniture-three.js';
+import { createOceanMaterial } from './ocean-three.js';
 
 const clamp = THREE.MathUtils.clamp;
 const radians = THREE.MathUtils.degToRad;
@@ -73,19 +74,39 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   const cube = new THREE.BoxGeometry(1, 1, 1);
   const plane = new THREE.PlaneGeometry(1, 1);
   const sphere = new THREE.SphereGeometry(1, 12, 8);
+  const curtainGeometry = new THREE.PlaneGeometry(1, 1, 48, 1);
+  const curtainPositions = curtainGeometry.attributes.position;
+  for (let i = 0; i < curtainPositions.count; i++) {
+    curtainPositions.setZ(i, Math.cos((curtainPositions.getX(i) + 0.5) * Math.PI * 12));
+  }
+  curtainGeometry.computeVertexNormals();
   const materials = new Map();
   const textures = new Set();
   const floorMaterials = new Map();
   const wallMaterial = material('wall', '#EDEAE3');
-  const frameMaterial = material('window frame', '#e8e6e1');
-  const glassMaterial = material('glass', '#93cce2', { transparent: true, opacity: 0.3, depthWrite: false, roughness: 0.16 });
+  const frameMaterial = material('window frame', '#eee9df', { roughness: 0.4 });
+  const glassMaterial = material('glass', '#d5e7e9', { transparent: true, opacity: 0.22, depthWrite: false, roughness: 0.08, metalness: 0.12 });
   const edgeMaterial = material('door edge', '#856948');
-  const knobMaterial = material('door knob', '#4a4640', { metalness: 0.6, roughness: 0.35 });
+  const knobMaterial = material('door knob', '#82735c', { metalness: 0.85, roughness: 0.26 });
+  const trimMaterial = material('architectural trim', '#e9e2d6', { roughness: 0.5 });
+  const curtainMaterial = material('linen curtains', '#e2d7c2', { roughness: 0.96, sheen: 0.65, sheenColor: new THREE.Color('#fff0d9'), sheenRoughness: 0.8, side: THREE.DoubleSide });
   const tokens = getComputedStyle(stage);
   const selectionMaterial = new THREE.LineBasicMaterial({ color: tokens.getPropertyValue('--color-primary').trim() || '#2563eb', depthTest: false });
   const overlapMaterial = new THREE.LineDashedMaterial({ color: tokens.getPropertyValue('--color-muted').trim() || '#71717a', dashSize: 6, gapSize: 3, depthTest: false });
   const outsideMaterial = new THREE.LineDashedMaterial({ color: tokens.getPropertyValue('--color-danger').trim() || '#dc2626', dashSize: 2, gapSize: 3, depthTest: false });
   const ceilingMaterial = material('ceiling', '#f4f2ee');
+  surfaceShader(wallMaterial, 0);
+  surfaceShader(ceilingMaterial, 0);
+  surfaceShader(curtainMaterial, 3);
+  const oceanMaterial = createOceanMaterial();
+  const seascape = new THREE.Group();
+  seascape.name = 'Window seascape';
+  seascape.visible = false;
+  scene.add(seascape);
+  const oceanFrustum = new THREE.Frustum();
+  const oceanProjection = new THREE.Matrix4();
+  let oceanMotion = true;
+  let oceanTick = null;
   const wallGroups = new Map();
   const furnitureModels = new Map();
   let architectureKey = '';
@@ -134,8 +155,54 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   }
 
   function material(name, color, extra = {}) {
-    if (!materials.has(name)) materials.set(name, new THREE.MeshStandardMaterial({ color, roughness: 0.82, ...extra }));
+    if (!materials.has(name)) materials.set(name, new THREE.MeshPhysicalMaterial({ color, roughness: 0.82, ...extra }));
     return materials.get(name);
+  }
+  // Keep PBR lighting/shadows; centimetre-space detail does not stretch on resize.
+  function surfaceShader(mat, kind) {
+    mat.customProgramCacheKey = () => 'room-surface-' + kind;
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vSurfacePosition;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurfacePosition = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>
+        varying vec3 vSurfacePosition;
+        float surfaceHash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+        float surfaceNoise(vec2 p) {
+          vec2 cell = floor(p), f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(surfaceHash(cell), surfaceHash(cell + vec2(1.0, 0.0)), u.x),
+            mix(surfaceHash(cell + vec2(0.0, 1.0)), surfaceHash(cell + vec2(1.0)), u.x), u.y);
+        }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          vec2 surfaceUV = ${kind === 0 || kind === 3 ? 'vec2(vSurfacePosition.x + vSurfacePosition.z, vSurfacePosition.y)' : 'vSurfacePosition.xz'};
+          float mottling = surfaceNoise(surfaceUV * 0.16);
+          float detail = surfaceNoise(surfaceUV * 3.0);
+          float surfacePattern = mix(mottling, detail, 0.25);
+          float surfaceRelief = (detail - 0.5) * 0.035;
+          ${kind === 1 ? `
+            float grainPhase = surfaceUV.x * 5.0 + surfaceNoise(surfaceUV * vec2(0.12, 0.025)) * 8.0;
+            float grain = sin(grainPhase) * (1.0 - smoothstep(0.8, 2.4, fwidth(grainPhase)));
+            surfacePattern = 0.5 + grain * 0.25 + (mottling - 0.5) * 0.3;
+            surfaceRelief = grain * 0.045;` : ''}
+          ${kind >= 3 ? `
+            vec2 weavePhase = surfaceUV * 18.0;
+            vec2 weave = sin(weavePhase) * (vec2(1.0) - smoothstep(vec2(0.8), vec2(2.4), fwidth(weavePhase)));
+            surfacePattern = 0.5 + (weave.x + weave.y) * 0.12;
+            surfaceRelief = (weave.x + weave.y) * 0.025;` : ''}
+          diffuseColor.rgb *= mix(${kind === 0 ? '0.96, 1.04' : '0.88, 1.08'}, surfacePattern);
+        `)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+          roughnessFactor = clamp(roughnessFactor + (surfacePattern - 0.5) * 0.12, 0.08, 1.0);`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          vec3 surfaceDX = dFdx(-vViewPosition), surfaceDY = dFdy(-vViewPosition);
+          vec3 surfaceRX = cross(surfaceDY, normal), surfaceRY = cross(normal, surfaceDX);
+          float surfaceDet = dot(surfaceDX, surfaceRX);
+          normal = normalize(abs(surfaceDet) * normal - sign(surfaceDet) *
+            (dFdx(surfaceRelief) * surfaceRX + dFdy(surfaceRelief) * surfaceRY));
+        `);
+    };
   }
 
   function texture(draw) {
@@ -158,10 +225,14 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
         ctx.lineWidth = 2;
         ctx.strokeStyle = kind === 'walnut' ? 'rgba(0,0,0,.18)' : 'rgba(0,0,0,.1)';
         if (kind === 'oak' || kind === 'walnut') {
+          ctx.fillStyle = 'rgba(255,255,255,.06)';
+          ctx.fillRect(0, 0, 128, 256);
+          ctx.fillStyle = 'rgba(75,44,20,.04)';
+          ctx.fillRect(128, 128, 128, 128);
           for (const x of [0, 128, 256]) {
             ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 256); ctx.stroke();
           }
-          ctx.strokeStyle = 'rgba(255,255,255,.18)';
+          ctx.strokeStyle = 'rgba(75,44,20,.16)';
           ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(128, 0); ctx.moveTo(128, 128); ctx.lineTo(256, 128); ctx.stroke();
           ctx.lineWidth = 0.7;
           ctx.strokeStyle = 'rgba(80,50,20,.07)';
@@ -169,25 +240,36 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
             ctx.beginPath(); ctx.moveTo(x, 0); ctx.bezierCurveTo(x + 5, 80, x - 5, 160, x, 256); ctx.stroke();
           }
         } else if (kind === 'herringbone') {
-          for (let i = -256; i <= 512; i += 64) {
-            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i - 256, 256); ctx.moveTo(i, 0); ctx.lineTo(i + 256, 256); ctx.stroke();
+          ctx.lineWidth = 1;
+          for (let i = -4; i <= 4; i++) for (let j = -16; j <= 16; j++) {
+            const x = i * 64 - j * 16, y = i * 64 + j * 16;
+            const shade = ((i * 3 + j) % 5 + 5) % 5;
+            ctx.fillStyle = ['#c9aa81', '#d5b68f', '#c3a27b', '#dbbf99', '#cfb18b'][shade];
+            ctx.fillRect(x, y, 64, 16); ctx.strokeRect(x, y, 64, 16);
+            ctx.fillStyle = ['#d5b68f', '#c3a27b', '#dbbf99', '#cfb18b', '#c9aa81'][shade];
+            ctx.fillRect(x + 64, y, 16, 64); ctx.strokeRect(x + 64, y, 16, 64);
           }
         } else if (kind === 'tile') {
           ctx.lineWidth = 4;
           ctx.strokeRect(0, 0, 256, 256);
-        } else {
-          ctx.fillStyle = 'rgba(0,0,0,.07)';
-          const step = kind === 'carpet' ? 8 : 12;
-          for (let x = 0; x < 256; x += step) for (let y = 0; y < 256; y += step) {
-            ctx.beginPath(); ctx.arc(x + (y % (step * 2) ? step / 2 : 0), y, 1.3, 0, Math.PI * 2); ctx.fill();
-          }
+        } else if (kind === 'carpet') {
+          ctx.fillStyle = 'rgba(0,0,0,.04)';
+          for (let x = 0; x < 256; x += 4) ctx.fillRect(x, 0, 1, 256);
+          ctx.fillStyle = 'rgba(255,255,255,.08)';
+          for (let y = 0; y < 256; y += 4) ctx.fillRect(0, y, 256, 1);
         }
       });
-      const result = material('floor ' + kind, '#ffffff', { map, roughness: kind === 'tile' ? 0.6 : 0.95 });
+      const wood = ['oak', 'walnut', 'herringbone'].includes(kind);
+      const result = material('floor ' + kind, '#ffffff', {
+        map, roughness: wood ? 0.48 : kind === 'tile' ? 0.34 : 0.94,
+        clearcoat: wood ? 0.18 : kind === 'tile' ? 0.24 : 0,
+        clearcoatRoughness: 0.4,
+      });
+      surfaceShader(result, wood ? 1 : kind === 'carpet' ? 4 : 2);
       floorMaterials.set(kind, result);
     }
     const result = floorMaterials.get(kind);
-    const repeat = kind === 'oak' || kind === 'walnut' ? [76, 180]
+    const repeat = kind === 'oak' || kind === 'walnut' ? [38, 180]
       : kind === 'tile' ? [60, 60] : kind === 'herringbone' ? [96, 96] : [48, 48];
     result.map.repeat.set(roomWidth / repeat[0], roomDepth / repeat[1]);
     return result;
@@ -204,7 +286,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
         ctx.strokeStyle = '#927957'; ctx.lineWidth = 2; ctx.strokeRect(30, 20, 196, 216);
         ctx.strokeStyle = '#ddc9a7'; ctx.strokeRect(33, 23, 190, 210);
       });
-      material(name, '#ffffff', { map });
+      material(name, '#ffffff', { map, roughness: 0.5, clearcoat: 0.15, clearcoatRoughness: 0.45 });
     }
     return materials.get(name);
   }
@@ -246,6 +328,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     if (key === architectureKey) return;
     architectureKey = key;
     architecture.clear();
+    seascape.clear();
     renderer.shadowMap.needsUpdate = true;
     wallGroups.clear();
     const room = state.room;
@@ -284,18 +367,65 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
       const holes = [doorHole, windowHole].filter(Boolean);
       rectangles({ x: horizontal ? -t : 0, y: 0, w: length + (horizontal ? t * 2 : 0), h: room.height }, holes,
         (x, y, w, h) => wallBox(group, side, room, x, y, w, h, t, wallMaterial, 'Wall segment'));
+      // Trim follows the cut-away wall and never spans a door/window opening.
+      for (const [y, h, name] of [[0, 8, 'Skirting board'], [room.height - 5, 5, 'Cornice']]) {
+        rectangles({ x: 0, y, w: length, h }, holes,
+          (px, py, pw, ph) => wallBox(group, side, room, px, py, pw, ph, t + 2, trimMaterial, name));
+      }
       if (windowHole) {
         const { x, y, w, h } = windowHole;
         const frame = Math.min(3, w / 4, h / 4);
         const addWindow = (rect, mat, thickness, name) => rectangles(rect, doorHole ? [doorHole] : [],
           (px, py, pw, ph) => wallBox(group, side, room, px, py, pw, ph, thickness, mat, name));
         addWindow(windowHole, glassMaterial, 0.5, 'Window glass');
+        const sign = side === 'top' || side === 'right' ? 1 : -1;
+        oceanMaterial.uniforms.windowCenter.value = sign * (x + w / 2);
+        oceanMaterial.uniforms.windowAxis.value.set(horizontal ? sign : 0, horizontal ? 0 : sign);
+        rectangles(windowHole, doorHole ? [doorHole] : [], (px, py, pw, ph) => {
+          const view = new THREE.Mesh(plane, oceanMaterial);
+          view.name = 'Ocean through window';
+          view.scale.set(pw, ph, 1);
+          // Inward-facing, just behind the glass; never a whole-scene background.
+          const exterior = t / 2 + 0.4;
+          if (horizontal) {
+            view.position.set(px + pw / 2, py + ph / 2, side === 'top' ? -exterior : room.depth + exterior);
+            view.rotation.y = side === 'top' ? 0 : Math.PI;
+          } else {
+            view.position.set(side === 'left' ? -exterior : room.width + exterior, py + ph / 2, px + pw / 2);
+            view.rotation.y = side === 'left' ? Math.PI / 2 : -Math.PI / 2;
+          }
+          seascape.add(view);
+        });
         for (const rect of [
           { x, y, w, h: frame }, { x, y: y + h - frame, w, h: frame },
           { x, y, w: frame, h }, { x: x + w - frame, y, w: frame, h },
           { x: x + w / 3 - frame / 2, y, w: frame, h },
           { x: x + w * 2 / 3 - frame / 2, y, w: frame, h },
         ]) addWindow(rect, frameMaterial, t + 1, 'Window frame');
+        addWindow({ x: x - 2, y: Math.max(0, y - 3), w: w + 4, h: 3 }, trimMaterial, t + 9, 'Window sill');
+        const railY = Math.min(room.height - 2, y + h + 10);
+        addWindow({ x, y: railY, w, h: 1.5 }, knobMaterial, t + 8, 'Curtain rail');
+        const curtainWidth = Math.min(24, w * 0.18);
+        const curtainBottom = Math.max(2, y - 28);
+        for (const start of [x, x + w - curtainWidth]) {
+          rectangles({ x: start, y: curtainBottom, w: curtainWidth, h: railY - curtainBottom }, doorHole ? [doorHole] : [],
+            (px, py, pw, ph) => {
+              const curtain = new THREE.Mesh(curtainGeometry, curtainMaterial);
+              curtain.name = 'Pleated linen curtain';
+              curtain.scale.set(pw, ph, 1.3);
+              const center = px + pw / 2;
+              const inset = 8;
+              if (horizontal) {
+                curtain.position.set(center, py + ph / 2, side === 'top' ? inset : room.depth - inset);
+                curtain.rotation.y = side === 'top' ? 0 : Math.PI;
+              } else {
+                curtain.position.set(side === 'left' ? inset : room.width - inset, py + ph / 2, center);
+                curtain.rotation.y = side === 'left' ? Math.PI / 2 : -Math.PI / 2;
+              }
+              curtain.castShadow = curtain.receiveShadow = true;
+              group.add(curtain);
+            });
+        }
       }
     }
     const door = new THREE.Group();
@@ -371,6 +501,11 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     const facing = { top: -direction.z, bottom: direction.z, left: -direction.x, right: direction.x };
     const ceiling = architecture.getObjectByName('Ceiling');
     if (ceiling) ceiling.visible = !!person;
+    const room = lastState?.room;
+    seascape.visible = !!person && !!room
+      && camera.position.x >= 0 && camera.position.x <= room.width
+      && camera.position.z >= 0 && camera.position.z <= room.depth
+      && camera.position.y >= 0 && camera.position.y <= room.height;
     for (const [side, group] of wallGroups) {
       const next = !!person || facing[side] <= 0;
       if (group.visible !== next) {
@@ -381,16 +516,26 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   }
 
   function requestRender() {
-    if (!visible || contextLost || disposed || frame !== null) return;
-    frame = requestAnimationFrame(() => {
+    if (!visible || document.hidden || contextLost || disposed || frame !== null) return;
+    frame = requestAnimationFrame((timestamp) => {
       frame = null;
       if (!visible || contextLost || disposed) return;
       cutaway();
+      camera.updateMatrixWorld();
+      oceanFrustum.setFromProjectionMatrix(oceanProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+      const animateOcean = oceanMotion && seascape.visible
+        && seascape.children.some((view) => oceanFrustum.intersectsObject(view));
+      if (animateOcean) {
+        if (oceanTick !== null) oceanMaterial.uniforms.time.value += Math.min((timestamp - oceanTick) / 1000, 0.1);
+        oceanTick = timestamp;
+      } else oceanTick = null;
       try {
         renderer.render(scene, camera);
       } catch (error) {
-        onError?.('3D 預覽繪製失敗：' + error.message);
+        oceanTick = null;
+        return onError?.('3D 預覽繪製失敗：' + error.message);
       }
+      if (animateOcean) requestRender();
     });
   }
 
@@ -535,6 +680,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     bounds = { ...options.bounds };
     wallThickness = state.room.wallThickness;
     lastState = state;
+    oceanMotion = options.oceanMotion !== false;
     currentZoom = clamp(options.zoom ?? currentZoom, 0.25, 4);
     // While first-person, keep the saved overview camera following room changes instead.
     const orbitTarget = person ? orbitSaved.target : controls.target;
@@ -728,6 +874,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   function cancelFrame() {
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
+    oceanTick = null;
   }
 
   function setVisible(value) {
@@ -769,6 +916,10 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   }
 
   function windowResize() { resize(width, height); }
+  function documentVisibilityChanged() {
+    if (document.hidden) cancelFrame();
+    else requestRender();
+  }
 
   function dispose() {
     if (disposed) return;
@@ -787,13 +938,16 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
     window.removeEventListener('keyup', keyUp);
     stopMoving();
     window.removeEventListener('resize', windowResize);
+    document.removeEventListener('visibilitychange', documentVisibilityChanged);
     furnitureBuilder.dispose();
     for (const line of markings.children) line.geometry.dispose();
     furnitureModels.clear();
     cube.dispose();
     plane.dispose();
     sphere.dispose();
+    curtainGeometry.dispose();
     for (const mat of materials.values()) mat.dispose();
+    oceanMaterial.dispose();
     for (const mat of [selectionMaterial, overlapMaterial, outsideMaterial]) mat.dispose();
     for (const map of textures) map.dispose();
     light.shadow.dispose();
@@ -815,6 +969,7 @@ export function createRoomPreview(stage, { onSelect, onZoom, onError }) {
   window.addEventListener('blur', stopMoving);
   window.addEventListener('keyup', keyUp);
   window.addEventListener('resize', windowResize);
+  document.addEventListener('visibilitychange', documentVisibilityChanged);
 
   return { canvas, update, resize, setVisible, setZoom, resetView, handleKey, dispose };
 }

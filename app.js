@@ -159,6 +159,8 @@
   let justAddedId = null;
   let viewMode = '2d';
   let cameraMode = 'orbit';
+  const oceanMotionPreference = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let oceanMotion = !oceanMotionPreference.matches;
   let statusFadeTimer = null;
   let snapDragToGrid = true;
   let panX2D = 0;
@@ -728,6 +730,7 @@
     preview3D.resize(width, height);
     preview3D.update(state, {
       bounds: layoutBounds(), doorPlan: doorPlan(), wallColor: WALLPAPER_MAP[state.wallpaper].color, zoom, cameraMode,
+      oceanMotion: oceanMotion && !oceanMotionPreference.matches,
       overlappingIds: state.items.filter((a) => state.items.some((b) => itemsOverlap(a, b))).map((item) => item.id),
       outsideIds: state.items.filter(itemOutsideRoom).map((item) => item.id),
     });
@@ -766,6 +769,11 @@
       if (missing && cameraMode === type) cameraMode = 'orbit';
     }
     cameraSelect.value = cameraMode;
+    const oceanButton = document.getElementById('btn-ocean-motion');
+    oceanButton.hidden = viewMode !== '3d' || cameraMode === 'orbit';
+    oceanButton.disabled = oceanMotionPreference.matches;
+    oceanButton.setAttribute('aria-pressed', String(oceanMotion && !oceanMotionPreference.matches));
+    oceanButton.title = oceanMotionPreference.matches ? '依減少動態設定暫停海景' : oceanMotion ? '暫停海浪與雲朵動畫' : '播放海浪與雲朵動畫';
     const reset = document.getElementById('btn-zoom-reset');
     reset.setAttribute('aria-label', '重設視角、平移與縮放');
     const statusText = viewMode === '2d'
@@ -1157,6 +1165,14 @@
       renderRoom();
       // Hand keys to the stage so WASD/arrows move the view instead of changing this select.
       document.getElementById('room-stage').focus({ preventScroll: true });
+    });
+    document.getElementById('btn-ocean-motion').addEventListener('click', () => {
+      oceanMotion = !oceanMotion;
+      renderRoom();
+    });
+    oceanMotionPreference.addEventListener('change', () => {
+      if (oceanMotionPreference.matches) oceanMotion = false;
+      renderRoom();
     });
     document.getElementById('btn-snap-grid').addEventListener('click', () => {
       snapDragToGrid = !snapDragToGrid;
